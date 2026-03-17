@@ -25,6 +25,8 @@
 # file, which matches the layout inside the official binary distribution
 # (tests/cefclient/ is two levels below the distribution root).
 
+set(CEF_ROOT /Users/shiy/work/cef_binary_145.0.28+g51162e8+chromium-145.0.7632.160_macosarm64)
+
 cmake_minimum_required(VERSION 3.21)
 project(cefclient_standalone)
 
@@ -152,19 +154,19 @@ set(CEFCLIENT_BROWSER_BROWSER_SRCS
 source_group(cefclient\\\\browser FILES ${CEFCLIENT_BROWSER_BROWSER_SRCS})
 
 set(CEFCLIENT_BROWSER_SHARED_BROWSER_SRCS
-  ../shared/browser/client_app_browser.cc
-  ../shared/browser/client_app_browser.h
-  ../shared/browser/file_util.cc
-  ../shared/browser/file_util.h
-  ../shared/browser/geometry_util.cc
-  ../shared/browser/geometry_util.h
-  ../shared/browser/main_message_loop.cc
-  ../shared/browser/main_message_loop.h
-  ../shared/browser/main_message_loop_external_pump.cc
-  ../shared/browser/main_message_loop_external_pump.h
-  ../shared/browser/main_message_loop_std.cc
-  ../shared/browser/main_message_loop_std.h
-  ../shared/browser/resource_util.h
+  ${CEF_ROOT}/tests/shared/browser/client_app_browser.cc
+  ${CEF_ROOT}/tests/shared/browser/client_app_browser.h
+  ${CEF_ROOT}/tests/shared/browser/file_util.cc
+  ${CEF_ROOT}/tests/shared/browser/file_util.h
+  ${CEF_ROOT}/tests/shared/browser/geometry_util.cc
+  ${CEF_ROOT}/tests/shared/browser/geometry_util.h
+  ${CEF_ROOT}/tests/shared/browser/main_message_loop.cc
+  ${CEF_ROOT}/tests/shared/browser/main_message_loop.h
+  ${CEF_ROOT}/tests/shared/browser/main_message_loop_external_pump.cc
+  ${CEF_ROOT}/tests/shared/browser/main_message_loop_external_pump.h
+  ${CEF_ROOT}/tests/shared/browser/main_message_loop_std.cc
+  ${CEF_ROOT}/tests/shared/browser/main_message_loop_std.h
+  ${CEF_ROOT}/tests/shared/browser/resource_util.h
   )
 source_group(shared\\\\browser FILES ${CEFCLIENT_BROWSER_SHARED_BROWSER_SRCS})
 
@@ -182,16 +184,16 @@ set(CEFCLIENT_COMMON_COMMON_SRCS
 source_group(cefclient\\\\common FILES ${CEFCLIENT_COMMON_COMMON_SRCS})
 
 set(CEFCLIENT_COMMON_SHARED_COMMON_SRCS
-  ../shared/common/binary_value_utils.cc
-  ../shared/common/binary_value_utils.h
-  ../shared/common/client_app.cc
-  ../shared/common/client_app.h
-  ../shared/common/client_app_other.cc
-  ../shared/common/client_app_other.h
-  ../shared/common/client_switches.cc
-  ../shared/common/client_switches.h
-  ../shared/common/string_util.cc
-  ../shared/common/string_util.h
+  ${CEF_ROOT}/tests/shared/common/binary_value_utils.cc
+  ${CEF_ROOT}/tests/shared/common/binary_value_utils.h
+  ${CEF_ROOT}/tests/shared/common/client_app.cc
+  ${CEF_ROOT}/tests/shared/common/client_app.h
+  ${CEF_ROOT}/tests/shared/common/client_app_other.cc
+  ${CEF_ROOT}/tests/shared/common/client_app_other.h
+  ${CEF_ROOT}/tests/shared/common/client_switches.cc
+  ${CEF_ROOT}/tests/shared/common/client_switches.h
+  ${CEF_ROOT}/tests/shared/common/string_util.cc
+  ${CEF_ROOT}/tests/shared/common/string_util.h
   )
 source_group(shared\\\\common FILES ${CEFCLIENT_COMMON_SHARED_COMMON_SRCS})
 
@@ -215,8 +217,8 @@ set(CEFCLIENT_RENDERER_RENDERER_SRCS
 source_group(cefclient\\\\renderer FILES ${CEFCLIENT_RENDERER_RENDERER_SRCS})
 
 set(CEFCLIENT_RENDERER_SHARED_RENDERER_SRCS
-  ../shared/renderer/client_app_renderer.cc
-  ../shared/renderer/client_app_renderer.h
+  ${CEF_ROOT}/tests/shared/renderer/client_app_renderer.cc
+  ${CEF_ROOT}/tests/shared/renderer/client_app_renderer.h
   )
 source_group(shared\\\\renderer FILES ${CEFCLIENT_RENDERER_SHARED_RENDERER_SRCS})
 
@@ -256,8 +258,8 @@ set(CEFCLIENT_LINUX_BROWSER_SRCS
 source_group(cefclient\\\\browser FILES ${CEFCLIENT_LINUX_BROWSER_SRCS})
 
 set(CEFCLIENT_LINUX_SHARED_BROWSER_SRCS
-  ../shared/browser/main_message_loop_external_pump_linux.cc
-  ../shared/browser/resource_util_posix.cc
+  ${CEF_ROOT}/tests/shared/browser/main_message_loop_external_pump_linux.cc
+  ${CEF_ROOT}/tests/shared/browser/resource_util_posix.cc
   )
 source_group(shared\\\\browser FILES ${CEFCLIENT_LINUX_SHARED_BROWSER_SRCS})
 
@@ -299,9 +301,9 @@ set(CEFCLIENT_MACOSX_BROWSER_SRCS
 source_group(cefclient\\\\browser FILES ${CEFCLIENT_MACOSX_BROWSER_SRCS})
 
 set(CEFCLIENT_MACOSX_SHARED_BROWSER_SRCS
-  ../shared/browser/main_message_loop_external_pump_mac.mm
-  ../shared/browser/resource_util_mac.mm
-  ../shared/browser/resource_util_posix.cc
+  ${CEF_ROOT}/tests/shared/browser/main_message_loop_external_pump_mac.mm
+  ${CEF_ROOT}/tests/shared/browser/resource_util_mac.mm
+  ${CEF_ROOT}/tests/shared/browser/resource_util_posix.cc
   )
 source_group(shared\\\\browser FILES ${CEFCLIENT_MACOSX_SHARED_BROWSER_SRCS})
 
@@ -313,7 +315,7 @@ set(CEFCLIENT_MAC_SRCS
 
 # macOS helper sources.
 set(CEFCLIENT_HELPER_SHARED_SRCS
-  ../shared/process_helper_mac.cc
+  ${CEF_ROOT}/tests/shared/process_helper_mac.cc
   )
 source_group(shared FILES ${CEFCLIENT_HELPER_SHARED_SRCS})
 
@@ -365,10 +367,10 @@ set(CEFCLIENT_WINDOWS_BROWSER_SRCS
 source_group(cefclient\\\\browser FILES ${CEFCLIENT_WINDOWS_BROWSER_SRCS})
 
 set(CEFCLIENT_WINDOWS_SHARED_BROWSER_SRCS
-  ../shared/browser/main_message_loop_external_pump_win.cc
-  ../shared/browser/resource_util_win.cc
-  ../shared/browser/util_win.cc
-  ../shared/browser/util_win.h
+  ${CEF_ROOT}/tests/shared/browser/main_message_loop_external_pump_win.cc
+  ${CEF_ROOT}/tests/shared/browser/resource_util_win.cc
+  ${CEF_ROOT}/tests/shared/browser/util_win.cc
+  ${CEF_ROOT}/tests/shared/browser/util_win.h
   )
 source_group(shared\\\\browser FILES ${CEFCLIENT_WINDOWS_SHARED_BROWSER_SRCS})
 
@@ -429,11 +431,11 @@ set(CEFCLIENT_RESOURCES_RESOURCES_SRCS
 source_group(cefclient\\\\resources FILES ${CEFCLIENT_RESOURCES_RESOURCES_SRCS})
 
 set(CEFCLIENT_RESOURCES_SHARED_RESOURCES_SRCS
-  ../shared/resources/osr_test.html
-  ../shared/resources/pdf.html
-  ../shared/resources/pdf.pdf
-  ../shared/resources/window_icon.1x.png
-  ../shared/resources/window_icon.2x.png
+  ${CEF_ROOT}/tests/shared/resources/osr_test.html
+  ${CEF_ROOT}/tests/shared/resources/pdf.html
+  ${CEF_ROOT}/tests/shared/resources/pdf.pdf
+  ${CEF_ROOT}/tests/shared/resources/window_icon.1x.png
+  ${CEF_ROOT}/tests/shared/resources/window_icon.2x.png
   )
 source_group(shared\\\\resources FILES ${CEFCLIENT_RESOURCES_SHARED_RESOURCES_SRCS})
 
@@ -579,7 +581,7 @@ if(OS_MAC)
   set(PREFIXES
     "mac/"
     "resources/"
-    "../shared/resources/"
+    "${CEF_ROOT}/tests/shared/resources/"
     )
   COPY_MAC_RESOURCES("${CEFCLIENT_RESOURCES_SRCS}" "${PREFIXES}" "${CEF_TARGET}" "${CMAKE_CURRENT_SOURCE_DIR}" "${CEF_APP}")
 endif()
