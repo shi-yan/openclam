@@ -8,7 +8,7 @@
 
 #include "include/cef_client.h"
 #include "include/wrapper/cef_message_router.h"
-#include "tests/cefclient/browser/test_runner.h"
+#include "browser/test_runner.h"
 
 namespace client {
 

@@ -6,7 +6,7 @@
 #define CEF_TESTS_CEFCLIENT_BROWSER_MEDIA_ROUTER_TEST_H_
 #pragma once
 
-#include "tests/cefclient/browser/test_runner.h"
+#include "browser/test_runner.h"
 
 namespace client::media_router_test {
 

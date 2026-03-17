@@ -2,7 +2,7 @@
 // reserved. Use of this source code is governed by a BSD-style license that
 // can be found in the LICENSE file.
 
-#include "tests/cefclient/browser/window_test.h"
+#include "browser/window_test.h"
 
 #include <algorithm>
 #include <sstream>
@@ -12,18 +12,18 @@
 #include "include/base/cef_callback.h"
 #include "include/views/cef_browser_view.h"
 #include "include/wrapper/cef_stream_resource_handler.h"
-#include "tests/cefclient/browser/main_context.h"
-#include "tests/cefclient/browser/root_window.h"
-#include "tests/cefclient/browser/test_runner.h"
-#include "tests/cefclient/browser/window_test_runner.h"
-#include "tests/cefclient/browser/window_test_runner_views.h"
+#include "browser/main_context.h"
+#include "browser/root_window.h"
+#include "browser/test_runner.h"
+#include "browser/window_test_runner.h"
+#include "browser/window_test_runner_views.h"
 
 #if defined(OS_WIN)
-#include "tests/cefclient/browser/window_test_runner_win.h"
+#include "browser/window_test_runner_win.h"
 #elif defined(OS_LINUX)
-#include "tests/cefclient/browser/window_test_runner_gtk.h"
+#include "browser/window_test_runner_gtk.h"
 #elif defined(OS_MAC)
-#include "tests/cefclient/browser/window_test_runner_mac.h"
+#include "browser/window_test_runner_mac.h"
 #endif
 
 namespace client::window_test {

@@ -25,20 +25,28 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref } from 'vue'
 
-const sessions = ref([
+interface Session {
+  id: number
+  name: string
+  url: string
+  icon: string
+  active: boolean
+}
+
+const sessions = ref<Session[]>([
   { id: 1, name: 'Research', url: 'google.com', icon: '🔍', active: true },
   { id: 2, name: 'Work',     url: 'github.com', icon: '💼', active: false },
 ])
 
-function selectSession(session) {
-  sessions.value.forEach(s => s.active = false)
+function selectSession(session: Session): void {
+  sessions.value.forEach(s => { s.active = false })
   session.active = true
 }
 
-function newSession() {
+function newSession(): void {
   const id = Date.now()
   sessions.value.push({ id, name: 'New Session', url: '', icon: '🌐', active: false })
 }

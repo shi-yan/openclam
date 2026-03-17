@@ -24,11 +24,11 @@
 #include "include/views/cef_textfield_delegate.h"
 #include "include/views/cef_window.h"
 #include "include/views/cef_window_delegate.h"
-#include "tests/cefclient/browser/image_cache.h"
-#include "tests/cefclient/browser/root_window.h"
-#include "tests/cefclient/browser/views_menu_bar.h"
-#include "tests/cefclient/browser/views_overlay_browser.h"
-#include "tests/cefclient/browser/views_overlay_controls.h"
+#include "browser/image_cache.h"
+#include "browser/root_window.h"
+#include "browser/views_menu_bar.h"
+#include "browser/views_overlay_browser.h"
+#include "browser/views_overlay_controls.h"
 
 namespace client {
 

@@ -9,8 +9,8 @@
 #include <memory>
 #include <string>
 
-#include "tests/cefclient/browser/browser_window.h"
-#include "tests/cefclient/browser/root_window.h"
+#include "browser/browser_window.h"
+#include "browser/root_window.h"
 
 namespace client {
 
@@ -34,8 +34,13 @@ class RootWindowMac : public RootWindow, public BrowserWindow::Delegate {
   RootWindow::Delegate* delegate() const;
   const OsrRendererSettings* osr_settings() const;
 
-  // Open a new tab navigating to |url|. Must be called on the main thread.
+  // Tab management. Must be called on the main thread.
   void OpenNewTab(const std::string& url);
+  void SwitchToTab(int index);
+  void CloseTab(int index, bool force);
+  // Calls CloseBrowser on all tabs. Returns true if any browser is still
+  // pending close (caller should cancel the native window close).
+  bool RequestCloseAllBrowsers(bool force);
 
   // RootWindow methods.
   void Init(RootWindow::Delegate* delegate,
@@ -71,10 +76,7 @@ class RootWindowMac : public RootWindow, public BrowserWindow::Delegate {
   void OnSetTitle(const std::string& title) override;
   void OnSetFullscreen(bool fullscreen) override;
   void OnAutoResize(const CefSize& new_size) override;
-  void OnContentsBounds(const CefRect& new_bounds) override {
-    RootWindow::SetBounds(new_bounds,
-                          /*content_bounds=*/DefaultToContentBounds());
-  }
+  void OnContentsBounds(const CefRect& new_bounds) override;
   void OnSetLoadingState(bool isLoading,
                          bool canGoBack,
                          bool canGoForward) override;

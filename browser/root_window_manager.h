@@ -12,9 +12,9 @@
 
 #include "include/cef_command_line.h"
 #include "include/cef_request_context_handler.h"
-#include "tests/cefclient/browser/image_cache.h"
-#include "tests/cefclient/browser/root_window.h"
-#include "tests/cefclient/browser/temp_window.h"
+#include "browser/image_cache.h"
+#include "browser/root_window.h"
+#include "browser/temp_window.h"
 
 namespace client {
 

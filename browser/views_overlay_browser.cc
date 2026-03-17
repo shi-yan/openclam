@@ -2,11 +2,11 @@
 // reserved. Use of this source code is governed by a BSD-style license that
 // can be found in the LICENSE file.
 
-#include "tests/cefclient/browser/views_overlay_browser.h"
+#include "browser/views_overlay_browser.h"
 
 #include "include/views/cef_window.h"
-#include "tests/cefclient/browser/resource.h"
-#include "tests/cefclient/browser/views_window.h"
+#include "browser/resource.h"
+#include "browser/views_window.h"
 
 namespace client {
 

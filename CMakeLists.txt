@@ -156,19 +156,19 @@ set(CEFCLIENT_BROWSER_BROWSER_SRCS
 source_group(cefclient\\\\browser FILES ${CEFCLIENT_BROWSER_BROWSER_SRCS})
 
 set(CEFCLIENT_BROWSER_SHARED_BROWSER_SRCS
-  ${CEF_ROOT}/tests/shared/browser/client_app_browser.cc
-  ${CEF_ROOT}/tests/shared/browser/client_app_browser.h
-  ${CEF_ROOT}/tests/shared/browser/file_util.cc
-  ${CEF_ROOT}/tests/shared/browser/file_util.h
-  ${CEF_ROOT}/tests/shared/browser/geometry_util.cc
-  ${CEF_ROOT}/tests/shared/browser/geometry_util.h
-  ${CEF_ROOT}/tests/shared/browser/main_message_loop.cc
-  ${CEF_ROOT}/tests/shared/browser/main_message_loop.h
-  ${CEF_ROOT}/tests/shared/browser/main_message_loop_external_pump.cc
-  ${CEF_ROOT}/tests/shared/browser/main_message_loop_external_pump.h
-  ${CEF_ROOT}/tests/shared/browser/main_message_loop_std.cc
-  ${CEF_ROOT}/tests/shared/browser/main_message_loop_std.h
-  ${CEF_ROOT}/tests/shared/browser/resource_util.h
+  shared/browser/client_app_browser.cc
+  shared/browser/client_app_browser.h
+  shared/browser/file_util.cc
+  shared/browser/file_util.h
+  shared/browser/geometry_util.cc
+  shared/browser/geometry_util.h
+  shared/browser/main_message_loop.cc
+  shared/browser/main_message_loop.h
+  shared/browser/main_message_loop_external_pump.cc
+  shared/browser/main_message_loop_external_pump.h
+  shared/browser/main_message_loop_std.cc
+  shared/browser/main_message_loop_std.h
+  shared/browser/resource_util.h
   )
 source_group(shared\\\\browser FILES ${CEFCLIENT_BROWSER_SHARED_BROWSER_SRCS})
 
@@ -186,16 +186,16 @@ set(CEFCLIENT_COMMON_COMMON_SRCS
 source_group(cefclient\\\\common FILES ${CEFCLIENT_COMMON_COMMON_SRCS})
 
 set(CEFCLIENT_COMMON_SHARED_COMMON_SRCS
-  ${CEF_ROOT}/tests/shared/common/binary_value_utils.cc
-  ${CEF_ROOT}/tests/shared/common/binary_value_utils.h
-  ${CEF_ROOT}/tests/shared/common/client_app.cc
-  ${CEF_ROOT}/tests/shared/common/client_app.h
-  ${CEF_ROOT}/tests/shared/common/client_app_other.cc
-  ${CEF_ROOT}/tests/shared/common/client_app_other.h
-  ${CEF_ROOT}/tests/shared/common/client_switches.cc
-  ${CEF_ROOT}/tests/shared/common/client_switches.h
-  ${CEF_ROOT}/tests/shared/common/string_util.cc
-  ${CEF_ROOT}/tests/shared/common/string_util.h
+  shared/common/binary_value_utils.cc
+  shared/common/binary_value_utils.h
+  shared/common/client_app.cc
+  shared/common/client_app.h
+  shared/common/client_app_other.cc
+  shared/common/client_app_other.h
+  shared/common/client_switches.cc
+  shared/common/client_switches.h
+  shared/common/string_util.cc
+  shared/common/string_util.h
   )
 source_group(shared\\\\common FILES ${CEFCLIENT_COMMON_SHARED_COMMON_SRCS})
 
@@ -219,8 +219,8 @@ set(CEFCLIENT_RENDERER_RENDERER_SRCS
 source_group(cefclient\\\\renderer FILES ${CEFCLIENT_RENDERER_RENDERER_SRCS})
 
 set(CEFCLIENT_RENDERER_SHARED_RENDERER_SRCS
-  ${CEF_ROOT}/tests/shared/renderer/client_app_renderer.cc
-  ${CEF_ROOT}/tests/shared/renderer/client_app_renderer.h
+  shared/renderer/client_app_renderer.cc
+  shared/renderer/client_app_renderer.h
   )
 source_group(shared\\\\renderer FILES ${CEFCLIENT_RENDERER_SHARED_RENDERER_SRCS})
 
@@ -303,9 +303,9 @@ set(CEFCLIENT_MACOSX_BROWSER_SRCS
 source_group(cefclient\\\\browser FILES ${CEFCLIENT_MACOSX_BROWSER_SRCS})
 
 set(CEFCLIENT_MACOSX_SHARED_BROWSER_SRCS
-  ${CEF_ROOT}/tests/shared/browser/main_message_loop_external_pump_mac.mm
-  ${CEF_ROOT}/tests/shared/browser/resource_util_mac.mm
-  ${CEF_ROOT}/tests/shared/browser/resource_util_posix.cc
+  shared/browser/main_message_loop_external_pump_mac.mm
+  shared/browser/resource_util_mac.mm
+  shared/browser/resource_util_posix.cc
   )
 source_group(shared\\\\browser FILES ${CEFCLIENT_MACOSX_SHARED_BROWSER_SRCS})
 
@@ -317,7 +317,7 @@ set(CEFCLIENT_MAC_SRCS
 
 # macOS helper sources.
 set(CEFCLIENT_HELPER_SHARED_SRCS
-  ${CEF_ROOT}/tests/shared/process_helper_mac.cc
+  shared/process_helper_mac.cc
   )
 source_group(shared FILES ${CEFCLIENT_HELPER_SHARED_SRCS})
 
@@ -554,9 +554,7 @@ if(OS_MAC)
 
   add_executable(${CEF_TARGET} MACOSX_BUNDLE ${CEFCLIENT_RESOURCES_SRCS} ${CEFCLIENT_SRCS})
   SET_EXECUTABLE_TARGET_PROPERTIES(${CEF_TARGET})
-  # Prepend the openclam source dir so our overridden headers (e.g.
-  # tests/cefclient/browser/root_window_mac.h) shadow the CEF originals.
-  target_include_directories(${CEF_TARGET} BEFORE PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_include_directories(${CEF_TARGET} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
   set_target_properties(${CEF_TARGET} PROPERTIES
     XCODE_ATTRIBUTE_GCC_TREAT_WARNINGS_AS_ERRORS NO
     MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/mac/Info.plist.in
@@ -597,7 +595,7 @@ if(OS_MAC)
 
     add_executable(${_helper_target} MACOSX_BUNDLE ${CEFCLIENT_HELPER_SRCS})
     SET_EXECUTABLE_TARGET_PROPERTIES(${_helper_target})
-    target_include_directories(${_helper_target} BEFORE PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_include_directories(${_helper_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     set_target_properties(${_helper_target} PROPERTIES
       XCODE_ATTRIBUTE_GCC_TREAT_WARNINGS_AS_ERRORS NO
       MACOSX_BUNDLE_INFO_PLIST ${_helper_info_plist}

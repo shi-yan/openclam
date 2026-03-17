@@ -8,7 +8,7 @@
 
 #include <optional>
 
-#include "tests/cefclient/browser/base_client_handler.h"
+#include "browser/base_client_handler.h"
 
 namespace client {
 

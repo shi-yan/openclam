@@ -2,12 +2,12 @@
 // reserved. Use of this source code is governed by a BSD-style license that
 // can be found in the LICENSE file.
 
-#include "tests/cefclient/browser/hang_test.h"
+#include "browser/hang_test.h"
 
 #include <string>
 
-#include "tests/cefclient/browser/base_client_handler.h"
-#include "tests/cefclient/browser/test_runner.h"
+#include "browser/base_client_handler.h"
+#include "browser/test_runner.h"
 
 namespace client::hang_test {
 

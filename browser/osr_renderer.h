@@ -10,7 +10,7 @@
 
 #include "include/cef_browser.h"
 #include "include/cef_render_handler.h"
-#include "tests/cefclient/browser/osr_renderer_settings.h"
+#include "browser/osr_renderer_settings.h"
 
 // Enable shader-based rendering for Linux only. Windows still uses OpenGL 1.1
 // to avoid the added complexity of linking newer OpenGL APIs on that platform.

@@ -2,13 +2,13 @@
 // reserved. Use of this source code is governed by a BSD-style license that
 // can be found in the LICENSE file.
 
-#include "tests/cefclient/browser/image_cache.h"
+#include "browser/image_cache.h"
 
 #include <algorithm>
 
-#include "tests/shared/browser/file_util.h"
-#include "tests/shared/browser/resource_util.h"
-#include "tests/shared/common/string_util.h"
+#include "shared/browser/file_util.h"
+#include "shared/browser/resource_util.h"
+#include "shared/common/string_util.h"
 
 namespace client {
 

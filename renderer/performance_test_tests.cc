@@ -2,12 +2,12 @@
 // reserved. Use of this source code is governed by a BSD-style license that
 // can be found in the LICENSE file.
 
-#include "tests/cefclient/renderer/performance_test.h"
+#include "renderer/performance_test.h"
 
 #include <array>
 
 #include "include/cef_v8.h"
-#include "tests/cefclient/renderer/performance_test_setup.h"
+#include "renderer/performance_test_setup.h"
 
 namespace client::performance_test {
 

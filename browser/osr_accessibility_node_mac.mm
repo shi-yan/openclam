@@ -5,12 +5,12 @@
 // Sample implementation for the NSAccessibility protocol for interacting with
 // VoiceOver and other accessibility clients.
 
-#include "tests/cefclient/browser/osr_accessibility_node.h"
+#include "browser/osr_accessibility_node.h"
 
 #import <AppKit/NSAccessibility.h>
 #import <Cocoa/Cocoa.h>
 
-#include "tests/cefclient/browser/osr_accessibility_helper.h"
+#include "browser/osr_accessibility_helper.h"
 
 namespace {
 

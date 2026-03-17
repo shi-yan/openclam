@@ -2,18 +2,18 @@
 // reserved. Use of this source code is governed by a BSD-style license that
 // can be found in the LICENSE file.
 
-#include "tests/cefclient/browser/client_browser.h"
+#include "browser/client_browser.h"
 
 #include "include/base/cef_logging.h"
 #include "include/cef_command_line.h"
 #include "include/cef_crash_util.h"
 #include "include/cef_file_util.h"
-#include "tests/cefclient/browser/client_prefs.h"
-#include "tests/cefclient/browser/default_client_handler.h"
-#include "tests/cefclient/browser/main_context.h"
-#include "tests/cefclient/browser/openclam_scheme_handler.h"
-#include "tests/cefclient/browser/root_window_manager.h"
-#include "tests/shared/common/client_switches.h"
+#include "browser/client_prefs.h"
+#include "browser/default_client_handler.h"
+#include "browser/main_context.h"
+#include "browser/openclam_scheme_handler.h"
+#include "browser/root_window_manager.h"
+#include "shared/common/client_switches.h"
 
 namespace client::browser {
 

@@ -2,7 +2,7 @@
 // reserved. Use of this source code is governed by a BSD-style license that
 // can be found in the LICENSE file.
 
-#include "tests/cefclient/browser/client_prefs.h"
+#include "browser/client_prefs.h"
 
 #include <memory>
 
@@ -12,8 +12,8 @@
 #include "include/cef_values.h"
 #include "include/views/cef_display.h"
 #include "include/wrapper/cef_helpers.h"
-#include "tests/shared/common/client_switches.h"
-#include "tests/shared/common/string_util.h"
+#include "shared/common/client_switches.h"
+#include "shared/common/string_util.h"
 
 namespace client::prefs {
 

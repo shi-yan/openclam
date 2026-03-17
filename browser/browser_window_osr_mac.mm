@@ -2,7 +2,7 @@
 // reserved. Use of this source code is governed by a BSD-style license that
 // can be found in the LICENSE file.
 
-#include "tests/cefclient/browser/browser_window_osr_mac.h"
+#include "browser/browser_window_osr_mac.h"
 
 #import <AppKit/NSAccessibility.h>
 #include <Cocoa/Cocoa.h>
@@ -15,14 +15,14 @@
 #include "include/cef_parser.h"
 #include "include/views/cef_display.h"
 #include "include/wrapper/cef_closure_task.h"
-#include "tests/cefclient/browser/bytes_write_handler.h"
-#include "tests/cefclient/browser/main_context.h"
-#include "tests/cefclient/browser/osr_accessibility_helper.h"
-#include "tests/cefclient/browser/osr_accessibility_node.h"
-#include "tests/cefclient/browser/text_input_client_osr_mac.h"
-#include "tests/cefclient/browser/util_mac.h"
-#include "tests/shared/browser/geometry_util.h"
-#include "tests/shared/browser/main_message_loop.h"
+#include "browser/bytes_write_handler.h"
+#include "browser/main_context.h"
+#include "browser/osr_accessibility_helper.h"
+#include "browser/osr_accessibility_node.h"
+#include "browser/text_input_client_osr_mac.h"
+#include "browser/util_mac.h"
+#include "shared/browser/geometry_util.h"
+#include "shared/browser/main_message_loop.h"
 
 // Begin disable NSOpenGL deprecation warnings.
 #pragma clang diagnostic push

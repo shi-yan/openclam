@@ -2,13 +2,13 @@
 // reserved. Use of this source code is governed by a BSD-style license that
 // can be found in the LICENSE file.
 
-#include "tests/cefclient/browser/browser_window_std_mac.h"
+#include "browser/browser_window_std_mac.h"
 
 #include <Cocoa/Cocoa.h>
 
 #include "include/base/cef_logging.h"
-#include "tests/cefclient/browser/client_handler_std.h"
-#include "tests/shared/browser/main_message_loop.h"
+#include "browser/client_handler_std.h"
+#include "shared/browser/main_message_loop.h"
 
 namespace client {
 

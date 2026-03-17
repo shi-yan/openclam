@@ -2,7 +2,7 @@
 // reserved. Use of this source code is governed by a BSD-style license that
 // can be found in the LICENSE file.
 
-#include "tests/cefclient/browser/test_runner.h"
+#include "browser/test_runner.h"
 
 #include <algorithm>
 #include <map>
@@ -18,25 +18,25 @@
 #include "include/views/cef_browser_view.h"
 #include "include/wrapper/cef_closure_task.h"
 #include "include/wrapper/cef_stream_resource_handler.h"
-#include "tests/cefclient/browser/base_client_handler.h"
-#include "tests/cefclient/browser/binary_transfer_test.h"
-#include "tests/cefclient/browser/binding_test.h"
-#include "tests/cefclient/browser/config_test.h"
-#include "tests/cefclient/browser/dialog_test.h"
-#include "tests/cefclient/browser/hang_test.h"
-#include "tests/cefclient/browser/main_context.h"
-#include "tests/cefclient/browser/media_router_test.h"
-#include "tests/cefclient/browser/preferences_test.h"
-#include "tests/cefclient/browser/resource.h"
-#include "tests/cefclient/browser/response_filter_test.h"
-#include "tests/cefclient/browser/root_window_manager.h"
-#include "tests/cefclient/browser/scheme_test.h"
-#include "tests/cefclient/browser/server_test.h"
-#include "tests/cefclient/browser/task_manager_test.h"
-#include "tests/cefclient/browser/urlrequest_test.h"
-#include "tests/cefclient/browser/window_test.h"
-#include "tests/shared/browser/resource_util.h"
-#include "tests/shared/common/string_util.h"
+#include "browser/base_client_handler.h"
+#include "browser/binary_transfer_test.h"
+#include "browser/binding_test.h"
+#include "browser/config_test.h"
+#include "browser/dialog_test.h"
+#include "browser/hang_test.h"
+#include "browser/main_context.h"
+#include "browser/media_router_test.h"
+#include "browser/preferences_test.h"
+#include "browser/resource.h"
+#include "browser/response_filter_test.h"
+#include "browser/root_window_manager.h"
+#include "browser/scheme_test.h"
+#include "browser/server_test.h"
+#include "browser/task_manager_test.h"
+#include "browser/urlrequest_test.h"
+#include "browser/window_test.h"
+#include "shared/browser/resource_util.h"
+#include "shared/common/string_util.h"
 
 namespace client::test_runner {
 

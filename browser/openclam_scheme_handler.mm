@@ -17,7 +17,7 @@
 //
 // No other host/path combinations are served (404).
 
-#include "tests/cefclient/browser/openclam_scheme_handler.h"
+#include "browser/openclam_scheme_handler.h"
 
 #include <string>
 

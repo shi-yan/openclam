@@ -2,7 +2,7 @@
 // reserved. Use of this source code is governed by a BSD-style license that
 // can be found in the LICENSE file.
 
-#include "tests/cefclient/browser/root_window_mac.h"
+#include "browser/root_window_mac.h"
 
 #include <Cocoa/Cocoa.h>
 
@@ -13,18 +13,18 @@
 #include "include/cef_app.h"
 #include "include/cef_application_mac.h"
 #include "include/views/cef_display.h"
-#include "tests/cefclient/browser/browser_window_osr_mac.h"
-#include "tests/cefclient/browser/browser_window_std_mac.h"
-#include "tests/cefclient/browser/client_prefs.h"
-#include "tests/cefclient/browser/main_context.h"
-#include "tests/cefclient/browser/osr_renderer_settings.h"
-#include "tests/cefclient/browser/root_window_manager.h"
-#include "tests/cefclient/browser/temp_window.h"
-#include "tests/cefclient/browser/util_mac.h"
-#include "tests/cefclient/browser/window_test_runner_mac.h"
-#include "tests/cefclient/browser/openclam_scheme_handler.h"
-#include "tests/shared/browser/main_message_loop.h"
-#include "tests/shared/common/client_switches.h"
+#include "browser/browser_window_osr_mac.h"
+#include "browser/browser_window_std_mac.h"
+#include "browser/client_prefs.h"
+#include "browser/main_context.h"
+#include "browser/osr_renderer_settings.h"
+#include "browser/root_window_manager.h"
+#include "browser/temp_window.h"
+#include "browser/util_mac.h"
+#include "browser/window_test_runner_mac.h"
+#include "browser/openclam_scheme_handler.h"
+#include "shared/browser/main_message_loop.h"
+#include "shared/common/client_switches.h"
 
 // Forward-declare the C++ impl so ObjC classes can hold a pointer to it.
 namespace client { class RootWindowMacImpl; }
@@ -100,8 +100,23 @@ void GetNSBoundsInDisplay(const CefRect& dip_bounds,
 
 class PanelBrowserDelegate : public BrowserWindow::Delegate {
  public:
+  // Call before CreateBrowser so OnBrowserCreated can size the browser NSView.
+  void SetParentView(NSView* parent) { parent_view_ = parent; }
+
   bool UseAlloyStyle() const override { return true; }
-  void OnBrowserCreated(CefRefPtr<CefBrowser>) override {}
+
+  // CEF creates the browser NSView asynchronously.  Force it to fill the
+  // parent container so there is no gap at the top or sides.
+  void OnBrowserCreated(CefRefPtr<CefBrowser> browser) override {
+    if (!parent_view_) return;
+    NSView* bv = CAST_CEF_WINDOW_HANDLE_TO_NSVIEW(
+        browser->GetHost()->GetWindowHandle());
+    if (bv) {
+      [bv setFrame:[parent_view_ bounds]];
+      [bv setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+    }
+  }
+
   void OnBrowserWindowDestroyed() override {}
   void OnSetAddress(const std::string&) override {}
   void OnSetTitle(const std::string&) override {}
@@ -110,6 +125,9 @@ class PanelBrowserDelegate : public BrowserWindow::Delegate {
   void OnContentsBounds(const CefRect&) override {}
   void OnSetLoadingState(bool, bool, bool) override {}
   void OnSetDraggableRegions(const std::vector<CefDraggableRegion>&) override {}
+
+ private:
+  NSView* __unsafe_unretained parent_view_ = nil;
 };
 
 // ===========================================================================
@@ -746,26 +764,60 @@ void RootWindowMacImpl::OnTabDestroyed(BrowserTabMac* tab) {
 
 void RootWindowMacImpl::CreateVuePanels(NSView* contentView,
                                          const CefBrowserSettings& settings) {
-  const NSRect cb = [contentView bounds];
-  const CGFloat cH = cb.size.height;
+  CGColorRef kPanelBg =
+      [NSColor colorWithCalibratedWhite:0.1f alpha:1.f].CGColor;
 
-  // Left panel container (sessions Vue browser).
-  left_panel_view_ = [[NSView alloc] initWithFrame:
-      NSMakeRect(0, 0, LEFT_PANEL_WIDTH, cH)];
+  // ---- Left panel container (sessions Vue browser) -------------------------
+  left_panel_view_ = [[NSView alloc] init];
 #if !__has_feature(objc_arc)
   [left_panel_view_ autorelease];
 #endif
-  [left_panel_view_ setAutoresizingMask:NSViewHeightSizable];
+  [left_panel_view_ setTranslatesAutoresizingMaskIntoConstraints:NO];
+  [left_panel_view_ setWantsLayer:YES];
+  left_panel_view_.layer.backgroundColor = kPanelBg;
   [contentView addSubview:left_panel_view_];
 
-  // Right panel container (tabs+chat Vue browser).
-  right_panel_view_ = [[NSView alloc] initWithFrame:
-      NSMakeRect(cb.size.width - RIGHT_PANEL_WIDTH, 0, RIGHT_PANEL_WIDTH, cH)];
+  // ---- Right panel container (tabs+chat Vue browser) -----------------------
+  right_panel_view_ = [[NSView alloc] init];
 #if !__has_feature(objc_arc)
   [right_panel_view_ autorelease];
 #endif
-  [right_panel_view_ setAutoresizingMask:NSViewHeightSizable | NSViewMinXMargin];
+  [right_panel_view_ setTranslatesAutoresizingMaskIntoConstraints:NO];
+  [right_panel_view_ setWantsLayer:YES];
+  right_panel_view_.layer.backgroundColor = kPanelBg;
   [contentView addSubview:right_panel_view_];
+
+  // Use Auto Layout to pin each panel to its edge with a fixed width.
+  [NSLayoutConstraint activateConstraints:@[
+    // Left panel: leading edge, full height, fixed width.
+    [left_panel_view_.leadingAnchor
+        constraintEqualToAnchor:contentView.leadingAnchor],
+    [left_panel_view_.topAnchor
+        constraintEqualToAnchor:contentView.topAnchor],
+    [left_panel_view_.bottomAnchor
+        constraintEqualToAnchor:contentView.bottomAnchor],
+    [left_panel_view_.widthAnchor
+        constraintEqualToConstant:LEFT_PANEL_WIDTH],
+
+    // Right panel: trailing edge, full height, fixed width.
+    [right_panel_view_.trailingAnchor
+        constraintEqualToAnchor:contentView.trailingAnchor],
+    [right_panel_view_.topAnchor
+        constraintEqualToAnchor:contentView.topAnchor],
+    [right_panel_view_.bottomAnchor
+        constraintEqualToAnchor:contentView.bottomAnchor],
+    [right_panel_view_.widthAnchor
+        constraintEqualToConstant:RIGHT_PANEL_WIDTH],
+  ]];
+
+  // Force the layout engine to compute actual frames before we pass rects
+  // to CEF's CreateBrowser (which needs real pixel dimensions).
+  [contentView layoutSubtreeIfNeeded];
+
+  // Give each delegate its parent so OnBrowserCreated can stretch the
+  // CEF browser NSView to fill the container exactly.
+  left_panel_delegate_.SetParentView(left_panel_view_);
+  right_panel_delegate_.SetParentView(right_panel_view_);
 
   // Build openclam://ui/ URLs — served by the custom scheme handler from the
   // app bundle's Resources/frontend/ directory.  No file:// access needed.
@@ -773,22 +825,29 @@ void RootWindowMacImpl::CreateVuePanels(NSView* contentView,
   const std::string sessions_url  = kScheme + "/sessions/index.html";
   const std::string tabs_chat_url = kScheme + "/tabs_chat/index.html";
 
+  const NSRect leftBounds  = [left_panel_view_  bounds];
+  const NSRect rightBounds = [right_panel_view_ bounds];
+
   // Create sessions panel browser (left).
   left_panel_browser_.reset(new BrowserWindowStdMac(
       &left_panel_delegate_, /*with_controls=*/false, sessions_url));
-  const CefRect left_rect(0, 0, LEFT_PANEL_WIDTH, static_cast<int>(cH));
   left_panel_browser_->CreateBrowser(
       CAST_NSVIEW_TO_CEF_WINDOW_HANDLE(left_panel_view_),
-      left_rect, settings, nullptr,
+      CefRect(0, 0,
+              static_cast<int>(leftBounds.size.width),
+              static_cast<int>(leftBounds.size.height)),
+      settings, nullptr,
       root_window_.delegate_->GetRequestContext());
 
   // Create tabs+chat panel browser (right).
   right_panel_browser_.reset(new BrowserWindowStdMac(
       &right_panel_delegate_, /*with_controls=*/false, tabs_chat_url));
-  const CefRect right_rect(0, 0, RIGHT_PANEL_WIDTH, static_cast<int>(cH));
   right_panel_browser_->CreateBrowser(
       CAST_NSVIEW_TO_CEF_WINDOW_HANDLE(right_panel_view_),
-      right_rect, settings, nullptr,
+      CefRect(0, 0,
+              static_cast<int>(rightBounds.size.width),
+              static_cast<int>(rightBounds.size.height)),
+      settings, nullptr,
       root_window_.delegate_->GetRequestContext());
 }
 
@@ -820,7 +879,8 @@ void RootWindowMacImpl::CreateRootWindow(const CefBrowserSettings& settings,
                                           backing:NSBackingStoreBuffered
                                             defer:NO];
   [window_ setTitle:@"cefclient"];
-  window_.appearance = [NSAppearance appearanceNamed:NSAppearanceNameAqua];
+  // Force dark appearance for the entire window (title bar, controls, etc.).
+  window_.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
 
   window_delegate_ = [[RootWindowDelegate alloc] initWithWindow:window_
                                                   andRootWindow:&root_window_];
@@ -829,12 +889,8 @@ void RootWindowMacImpl::CreateRootWindow(const CefBrowserSettings& settings,
 
   [window_ setReleasedWhenClosed:NO];
 
-  const cef_color_t bg = MainContext::Get()->GetBackgroundColor();
-  [window_ setBackgroundColor:
-      [NSColor colorWithCalibratedRed:float(CefColorGetR(bg)) / 255.f
-                                green:float(CefColorGetG(bg)) / 255.f
-                                 blue:float(CefColorGetB(bg)) / 255.f
-                                alpha:1.f]];
+  // Dark window background — fills any gaps between native subviews.
+  [window_ setBackgroundColor:[NSColor colorWithCalibratedWhite:0.1f alpha:1.f]];
 
   NSView* contentView = [window_ contentView];
   NSRect contentBounds = [contentView bounds];
@@ -842,25 +898,39 @@ void RootWindowMacImpl::CreateRootWindow(const CefBrowserSettings& settings,
   if (!with_osr_) [contentView setWantsLayer:YES];
 
   if (has_controls) {
-    const CGFloat contentW = contentBounds.size.width;
-    const CGFloat contentH = contentBounds.size.height;
-    const CGFloat browserAreaX = LEFT_PANEL_WIDTH;
-    const CGFloat browserAreaW = contentW - LEFT_PANEL_WIDTH - RIGHT_PANEL_WIDTH;
-    const CGFloat urlH = URLBAR_HEIGHT;
-    const CGFloat browserH = contentH - urlH;
-
-    // Create Vue sidebar panels (left: sessions, right: tabs+chat).
+    // Create Vue sidebar panels (left/right containers with Auto Layout).
+    // Also forces the first layout pass internally.
     CreateVuePanels(contentView, settings);
 
     // Center panel: url bar + web content browser.
-    browser_area_view_ = [[NSView alloc] initWithFrame:
-        NSMakeRect(browserAreaX, 0, browserAreaW, contentH)];
+    // Auto Layout pins it between the two sidebar panels, full height.
+    browser_area_view_ = [[NSView alloc] init];
 #if !__has_feature(objc_arc)
     [browser_area_view_ autorelease];
 #endif
-    [browser_area_view_ setAutoresizingMask:
-        NSViewWidthSizable | NSViewHeightSizable];
+    [browser_area_view_ setTranslatesAutoresizingMaskIntoConstraints:NO];
+    [browser_area_view_ setWantsLayer:YES];
+    browser_area_view_.layer.backgroundColor =
+        [NSColor colorWithCalibratedWhite:0.12f alpha:1.f].CGColor;
     [contentView addSubview:browser_area_view_];
+    [NSLayoutConstraint activateConstraints:@[
+      [browser_area_view_.leadingAnchor
+          constraintEqualToAnchor:left_panel_view_.trailingAnchor],
+      [browser_area_view_.trailingAnchor
+          constraintEqualToAnchor:right_panel_view_.leadingAnchor],
+      [browser_area_view_.topAnchor
+          constraintEqualToAnchor:contentView.topAnchor],
+      [browser_area_view_.bottomAnchor
+          constraintEqualToAnchor:contentView.bottomAnchor],
+    ]];
+    [contentView layoutSubtreeIfNeeded];
+
+    // Read actual frame from the layout engine.
+    const NSRect centerBounds = [browser_area_view_ bounds];
+    const CGFloat browserAreaW = centerBounds.size.width;
+    const CGFloat contentH     = centerBounds.size.height;
+    const CGFloat urlH         = URLBAR_HEIGHT;
+    const CGFloat browserH     = contentH - urlH;
 
     // URL bar at the top of browser_area_view_ (AppKit: high y = top).
     NSRect br;

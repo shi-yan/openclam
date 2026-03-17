@@ -9,14 +9,14 @@
 #import "include/cef_application_mac.h"
 #import "include/cef_id_mappers.h"
 #import "include/wrapper/cef_library_loader.h"
-#include "tests/cefclient/browser/main_context_impl.h"
-#include "tests/cefclient/browser/resource.h"
-#include "tests/cefclient/browser/root_window.h"
-#include "tests/cefclient/browser/test_runner.h"
-#include "tests/shared/browser/client_app_browser.h"
-#include "tests/shared/browser/main_message_loop_external_pump.h"
-#include "tests/shared/browser/main_message_loop_std.h"
-#include "tests/shared/common/client_switches.h"
+#include "browser/main_context_impl.h"
+#include "browser/resource.h"
+#include "browser/root_window.h"
+#include "browser/test_runner.h"
+#include "shared/browser/client_app_browser.h"
+#include "shared/browser/main_message_loop_external_pump.h"
+#include "shared/browser/main_message_loop_std.h"
+#include "shared/common/client_switches.h"
 
 namespace {
 

@@ -45,40 +45,51 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, nextTick } from 'vue'
 
-const tabs = ref([
+interface Tab {
+  id: number
+  title: string
+}
+
+interface Message {
+  id: number
+  role: 'user' | 'assistant'
+  text: string
+}
+
+const tabs = ref<Tab[]>([
   { id: 1, title: 'New Tab' },
 ])
 const activeTab = ref(0)
 
-const messages = ref([
-  { id: 1, role: 'assistant', text: 'Hello! I\'m your browser agent. How can I help?' },
+const messages = ref<Message[]>([
+  { id: 1, role: 'assistant', text: "Hello! I'm your browser agent. How can I help?" },
 ])
 const draft = ref('')
-const chatEl = ref(null)
+const chatEl = ref<HTMLDivElement | null>(null)
 
 let nextTabId = 2
 let nextMsgId = 2
 
-function switchTab(i) {
+function switchTab(i: number): void {
   activeTab.value = i
 }
 
-function closeTab(i) {
+function closeTab(i: number): void {
   if (tabs.value.length === 1) return
   tabs.value.splice(i, 1)
   if (activeTab.value >= tabs.value.length)
     activeTab.value = tabs.value.length - 1
 }
 
-function newTab() {
+function newTab(): void {
   tabs.value.push({ id: nextTabId++, title: 'New Tab' })
   activeTab.value = tabs.value.length - 1
 }
 
-async function sendMessage() {
+async function sendMessage(): Promise<void> {
   const text = draft.value.trim()
   if (!text) return
   draft.value = ''
@@ -89,7 +100,7 @@ async function sendMessage() {
   // Placeholder echo.
   setTimeout(() => {
     messages.value.push({ id: nextMsgId++, role: 'assistant', text: `(echo) ${text}` })
-    nextTick(() => chatEl.value?.scrollTo({ top: chatEl.value.scrollHeight, behavior: 'smooth' }))
+    void nextTick(() => chatEl.value?.scrollTo({ top: chatEl.value!.scrollHeight, behavior: 'smooth' }))
   }, 400)
 }
 </script>

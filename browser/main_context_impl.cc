@@ -2,16 +2,16 @@
 // reserved. Use of this source code is governed by a BSD-style license that
 // can be found in the LICENSE file.
 
-#include "tests/cefclient/browser/main_context_impl.h"
+#include "browser/main_context_impl.h"
 
 #include <algorithm>
 #include <memory>
 
 #include "include/cef_parser.h"
-#include "tests/cefclient/browser/test_runner.h"
-#include "tests/shared/browser/client_app_browser.h"
-#include "tests/shared/common/client_switches.h"
-#include "tests/shared/common/string_util.h"
+#include "browser/test_runner.h"
+#include "shared/browser/client_app_browser.h"
+#include "shared/common/client_switches.h"
+#include "shared/common/string_util.h"
 
 namespace client {
 
