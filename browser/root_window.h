@@ -225,6 +225,10 @@ class RootWindow
   // Returns true if this window is using windowless rendering (osr).
   virtual bool WithWindowlessRendering() const = 0;
 
+  // Open a new tab navigating to |url|. Default no-op for platforms without
+  // tab support.
+  virtual void OpenNewTab(const std::string& url) {}
+
   // Returns true if this object has been initialized.
   bool IsInitialized() const { return initialized_; }
 

@@ -1001,10 +1001,35 @@ bool ClientHandler::OnBeforePopup(
     bool* no_javascript_access) {
   CEF_REQUIRE_UI_THREAD();
 
+  LOG(INFO) << "OnBeforePopup: disposition=" << target_disposition
+            << " url=" << target_url.ToString()
+            << " browser_id=" << browser->GetIdentifier();
+
   if (target_disposition == CEF_WOD_NEW_PICTURE_IN_PICTURE) {
     // Use default handling for document picture-in-picture popups.
     client = nullptr;
     return false;
+  }
+
+  // Redirect new-tab requests into the opener's tab bar instead of a new
+  // window.
+  if (target_disposition == CEF_WOD_NEW_FOREGROUND_TAB ||
+      target_disposition == CEF_WOD_NEW_BACKGROUND_TAB) {
+    auto root_window = MainContext::Get()->GetRootWindowManager()->GetWindowForBrowser(
+        browser->GetIdentifier());
+    LOG(INFO) << "OnBeforePopup new-tab: root_window=" << root_window.get()
+              << " url=" << target_url.ToString();
+    if (root_window && !target_url.empty()) {
+      const std::string url = target_url.ToString();
+      // OpenNewTab must run on the main thread; OnBeforePopup is on UI thread.
+      MAIN_POST_CLOSURE(base::BindOnce(
+          [](scoped_refptr<RootWindow> w, std::string u) {
+            w->OpenNewTab(u);
+          },
+          root_window, url));
+      // Cancel the popup — we're handling it as a tab.
+      return true;
+    }
   }
 
   // Potentially create a new RootWindow for the popup browser that will be

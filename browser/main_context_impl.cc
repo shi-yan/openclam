@@ -85,8 +85,10 @@ MainContextImpl::MainContextImpl(CefRefPtr<CefCommandLine> command_line,
     use_views_ = false;
   }
 
-  // Whether Alloy style will be used.
-  use_alloy_style_ = command_line_->HasSwitch(switches::kUseAlloyStyle);
+  // Whether Alloy style will be used. Default to Alloy (native AppKit windows)
+  // for openclam so our custom tab UI in RootWindowMac is active.
+  use_alloy_style_ = !command_line_->HasSwitch(switches::kUseViews) ||
+                     command_line_->HasSwitch(switches::kUseAlloyStyle);
 
   if (use_windowless_rendering_ && !use_alloy_style_) {
     LOG(WARNING) << "Windowless rendering requires Alloy style.";
@@ -105,7 +107,8 @@ MainContextImpl::MainContextImpl(CefRefPtr<CefCommandLine> command_line,
   }
 #endif
 
-  if (!use_views_ && !use_chrome_native_parent && !use_windowless_rendering_) {
+  if (!use_views_ && !use_chrome_native_parent && !use_windowless_rendering_ &&
+      !use_alloy_style_) {
     LOG(WARNING) << "Chrome runtime defaults to the Views framework.";
     use_views_ = true;
   }

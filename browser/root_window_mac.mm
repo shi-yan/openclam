@@ -680,6 +680,12 @@ void RootWindowMacImpl::OnTabReady(BrowserTabMac* tab) {
   }
   if (idx < 0) return;  // already in closing_tabs_, ignore
 
+  // Open a second tab automatically when the first tab of the initial window
+  // becomes ready, so the tab bar is usable immediately.
+  if (idx == 0 && tabs_.size() == 1 && !is_popup_) {
+    OpenNewTab("about:blank");
+  }
+
   if (idx != active_tab_idx_) {
     // This tab was created but is not active — hide and pause immediately.
     auto browser = tab->browser_window()->GetBrowser();
