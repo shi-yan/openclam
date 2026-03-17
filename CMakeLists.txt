@@ -105,6 +105,8 @@ set(CEFCLIENT_BROWSER_BROWSER_SRCS
   browser/main_context.h
   browser/main_context_impl.cc
   browser/main_context_impl.h
+  browser/openclam_scheme_handler.mm
+  browser/openclam_scheme_handler.h
   browser/media_router_test.cc
   browser/media_router_test.h
   browser/osr_dragdrop_events.h
@@ -595,6 +597,7 @@ if(OS_MAC)
 
     add_executable(${_helper_target} MACOSX_BUNDLE ${CEFCLIENT_HELPER_SRCS})
     SET_EXECUTABLE_TARGET_PROPERTIES(${_helper_target})
+    target_include_directories(${_helper_target} BEFORE PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     set_target_properties(${_helper_target} PROPERTIES
       XCODE_ATTRIBUTE_GCC_TREAT_WARNINGS_AS_ERRORS NO
       MACOSX_BUNDLE_INFO_PLIST ${_helper_info_plist}

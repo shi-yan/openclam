@@ -11,6 +11,7 @@
 #include "tests/cefclient/browser/client_prefs.h"
 #include "tests/cefclient/browser/default_client_handler.h"
 #include "tests/cefclient/browser/main_context.h"
+#include "tests/cefclient/browser/openclam_scheme_handler.h"
 #include "tests/cefclient/browser/root_window_manager.h"
 #include "tests/shared/common/client_switches.h"
 
@@ -36,6 +37,9 @@ class ClientBrowserDelegate : public ClientAppBrowser::Delegate {
   }
 
   void OnContextInitialized(CefRefPtr<ClientAppBrowser> app) override {
+    // Register the openclam:// scheme handler so Vue panel pages load.
+    openclam_scheme::RegisterSchemeHandlerFactory();
+
     if (CefCrashReportingEnabled()) {
       // Set some crash keys for testing purposes. Keys must be defined in the
       // "crash_reporter.cfg" file. See cef_crash_util.h for details.
@@ -63,9 +67,6 @@ class ClientBrowserDelegate : public ClientAppBrowser::Delegate {
     if (client::MainContext::Get()->TouchEventsEnabled()) {
       command_line->AppendSwitchWithValue("touch-events", "enabled");
     }
-    // Allow file:// pages to load local file:// sub-resources (scripts, CSS).
-    // Required so our Vue sidebar panels load their bundled JS/CSS assets.
-    command_line->AppendSwitch("allow-file-access-from-files");
   }
 
   bool OnAlreadyRunningAppRelaunch(

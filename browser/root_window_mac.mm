@@ -22,6 +22,7 @@
 #include "tests/cefclient/browser/temp_window.h"
 #include "tests/cefclient/browser/util_mac.h"
 #include "tests/cefclient/browser/window_test_runner_mac.h"
+#include "tests/cefclient/browser/openclam_scheme_handler.h"
 #include "tests/shared/browser/main_message_loop.h"
 #include "tests/shared/common/client_switches.h"
 
@@ -766,28 +767,13 @@ void RootWindowMacImpl::CreateVuePanels(NSView* contentView,
   [right_panel_view_ setAutoresizingMask:NSViewHeightSizable | NSViewMinXMargin];
   [contentView addSubview:right_panel_view_];
 
-  // Resolve the path to the Vue dist files inside the app bundle.
-  NSBundle* bundle = [NSBundle mainBundle];
-  NSString* sessionsPath = [bundle pathForResource:@"index"
-                                            ofType:@"html"
-                                       inDirectory:@"frontend/sessions"];
-  NSString* tabsChatPath = [bundle pathForResource:@"index"
-                                            ofType:@"html"
-                                       inDirectory:@"frontend/tabs_chat"];
+  // Build openclam://ui/ URLs — served by the custom scheme handler from the
+  // app bundle's Resources/frontend/ directory.  No file:// access needed.
+  const std::string kScheme = std::string(openclam_scheme::kSchemeName) + "://ui";
+  const std::string sessions_url  = kScheme + "/sessions/index.html";
+  const std::string tabs_chat_url = kScheme + "/tabs_chat/index.html";
 
-  if (!sessionsPath) {
-    LOG(WARNING) << "Sessions Vue panel HTML not found in bundle resources. "
-                    "Run cmake --build to copy Vue dist files.";
-  }
-  if (!tabsChatPath) {
-    LOG(WARNING) << "Tabs/chat Vue panel HTML not found in bundle resources. "
-                    "Run cmake --build to copy Vue dist files.";
-  }
-
-  // Create sessions panel browser.
-  std::string sessions_url = sessionsPath
-      ? "file://" + std::string([sessionsPath UTF8String])
-      : "about:blank";
+  // Create sessions panel browser (left).
   left_panel_browser_.reset(new BrowserWindowStdMac(
       &left_panel_delegate_, /*with_controls=*/false, sessions_url));
   const CefRect left_rect(0, 0, LEFT_PANEL_WIDTH, static_cast<int>(cH));
@@ -796,10 +782,7 @@ void RootWindowMacImpl::CreateVuePanels(NSView* contentView,
       left_rect, settings, nullptr,
       root_window_.delegate_->GetRequestContext());
 
-  // Create tabs+chat panel browser.
-  std::string tabs_chat_url = tabsChatPath
-      ? "file://" + std::string([tabsChatPath UTF8String])
-      : "about:blank";
+  // Create tabs+chat panel browser (right).
   right_panel_browser_.reset(new BrowserWindowStdMac(
       &right_panel_delegate_, /*with_controls=*/false, tabs_chat_url));
   const CefRect right_rect(0, 0, RIGHT_PANEL_WIDTH, static_cast<int>(cH));
