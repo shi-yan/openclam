@@ -29,9 +29,13 @@ class RootWindowMac : public RootWindow, public BrowserWindow::Delegate {
   RootWindowMac(const RootWindowMac&) = delete;
   RootWindowMac& operator=(const RootWindowMac&) = delete;
 
+  // Returns the active tab's BrowserWindow, or nullptr if no tabs exist.
   BrowserWindow* browser_window() const;
   RootWindow::Delegate* delegate() const;
   const OsrRendererSettings* osr_settings() const;
+
+  // Open a new tab navigating to |url|. Must be called on the main thread.
+  void OpenNewTab(const std::string& url);
 
   // RootWindow methods.
   void Init(RootWindow::Delegate* delegate,

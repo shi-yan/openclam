@@ -531,6 +531,9 @@ if(OS_MAC)
 
   add_executable(${CEF_TARGET} MACOSX_BUNDLE ${CEFCLIENT_RESOURCES_SRCS} ${CEFCLIENT_SRCS})
   SET_EXECUTABLE_TARGET_PROPERTIES(${CEF_TARGET})
+  # Prepend the openclam source dir so our overridden headers (e.g.
+  # tests/cefclient/browser/root_window_mac.h) shadow the CEF originals.
+  target_include_directories(${CEF_TARGET} BEFORE PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
   set_target_properties(${CEF_TARGET} PROPERTIES
     XCODE_ATTRIBUTE_GCC_TREAT_WARNINGS_AS_ERRORS NO
     MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/mac/Info.plist.in
