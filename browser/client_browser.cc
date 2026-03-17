@@ -63,6 +63,9 @@ class ClientBrowserDelegate : public ClientAppBrowser::Delegate {
     if (client::MainContext::Get()->TouchEventsEnabled()) {
       command_line->AppendSwitchWithValue("touch-events", "enabled");
     }
+    // Allow file:// pages to load local file:// sub-resources (scripts, CSS).
+    // Required so our Vue sidebar panels load their bundled JS/CSS assets.
+    command_line->AppendSwitch("allow-file-access-from-files");
   }
 
   bool OnAlreadyRunningAppRelaunch(

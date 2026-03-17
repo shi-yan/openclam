@@ -23,6 +23,37 @@ Before settling on CEF, two alternatives were investigated:
 
 CEF was chosen because it runs Chromium as an embedded library with full programmatic control and no permission restrictions — the agent has the same access as the browser process itself.
 
+## UI Architecture — Native + Vue Hybrid
+
+The browser UI is a hybrid of **native AppKit (C++)** and **Vue 3 web pages** rendered in embedded CEF panels.
+
+### Layout (macOS)
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  [Sessions Vue — 220px] │ [URL bar + web content] │ [Tabs+Chat Vue — 280px] │
+└──────────────────────────────────────────────────────────┘
+```
+
+### Native AppKit parts (C++ / Objective-C++)
+
+- **App window** — created and managed in `browser/root_window_mac.mm` using `NSWindow` + `NSView` hierarchy.
+- **URL toolbar** — Back, Forward, Reload, Stop buttons and the URL `NSTextField` at the top of the center panel. Built with native `NSButton`/`NSTextField`.
+- **Multi-tab management** — hidden/visible `NSView` swapping. Each tab is a `BrowserTabMac` (owns a `BrowserWindowStdMac` which creates a CEF browser as an `NSView` child of the center panel). Only the active tab's view is visible; others are hidden and have `WasHidden(true)` called to pause rendering.
+- **Panel container NSViews** — three `NSView` regions are created at startup: left panel, center browser area, right panel. These are pure AppKit layout containers.
+
+### Vue parts (HTML/CSS/JS in CEF browsers)
+
+- **Sessions panel** (`frontend/sessions/`) — left sidebar panel. A Vue 3 (Vite) page served as a local `file://` URL inside a dedicated CEF browser `NSView`. Shows browsing sessions.
+- **Tabs & Chat panel** (`frontend/tabs_chat/`) — right sidebar panel. A Vue 3 (Vite) page in another dedicated CEF browser `NSView`. Shows the tab list and agent chat interface.
+- Vue sources live in `frontend/` and are built by `npm run build` as a CMake prebuild step.
+- Built `dist/` files are copied to `cefclient.app/Contents/Resources/frontend/{sessions,tabs_chat}/` and loaded via `file://` URLs resolved with `[NSBundle pathForResource:...]`.
+
+### Why this hybrid?
+
+- AppKit for the window shell and toolbar: simple, native performance, handles OS integration (minimize, fullscreen, resize).
+- Vue for sidebar UI: easy to iterate on rich interactive UI without recompiling C++; cross-platform HTML/CSS; agent can later drive these panels via JS injection.
+
 ## Codebase Structure
 
 The project mirrors the `tests/cefclient` layout from the CEF distribution:

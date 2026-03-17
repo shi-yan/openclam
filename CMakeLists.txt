@@ -529,6 +529,27 @@ if(OS_MAC)
   set(EXECUTABLE_NAME "${CEF_TARGET}")
   set(PRODUCT_NAME "${CEF_TARGET}")
 
+  # ---------------------------------------------------------------------------
+  # Vue frontend prebuild
+  # ---------------------------------------------------------------------------
+  find_program(NPM_EXECUTABLE npm REQUIRED)
+
+  add_custom_target(vue_build_sessions
+    COMMAND ${NPM_EXECUTABLE} install
+    COMMAND ${NPM_EXECUTABLE} run build
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/frontend/sessions"
+    COMMENT "Building Vue frontend: sessions"
+    VERBATIM
+  )
+
+  add_custom_target(vue_build_tabs_chat
+    COMMAND ${NPM_EXECUTABLE} install
+    COMMAND ${NPM_EXECUTABLE} run build
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/frontend/tabs_chat"
+    COMMENT "Building Vue frontend: tabs_chat"
+    VERBATIM
+  )
+
   add_executable(${CEF_TARGET} MACOSX_BUNDLE ${CEFCLIENT_RESOURCES_SRCS} ${CEFCLIENT_SRCS})
   SET_EXECUTABLE_TARGET_PROPERTIES(${CEF_TARGET})
   # Prepend the openclam source dir so our overridden headers (e.g.
@@ -538,10 +559,23 @@ if(OS_MAC)
     XCODE_ATTRIBUTE_GCC_TREAT_WARNINGS_AS_ERRORS NO
     MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/mac/Info.plist.in
     )
-  add_dependencies(${CEF_TARGET} libcef_dll_wrapper)
+  add_dependencies(${CEF_TARGET} libcef_dll_wrapper vue_build_sessions vue_build_tabs_chat)
   target_link_libraries(${CEF_TARGET} libcef_dll_wrapper ${CEF_STANDARD_LIBS} "-framework OpenGL")
 
   COPY_MAC_FRAMEWORK("${CEF_TARGET}" "${CEF_BINARY_DIR}" "${CEF_APP}")
+
+  # Copy Vue dist directories into the app bundle Resources folder.
+  add_custom_command(
+    TARGET ${CEF_TARGET} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/frontend/sessions/dist"
+            "${CEF_APP}/Contents/Resources/frontend/sessions"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/frontend/tabs_chat/dist"
+            "${CEF_APP}/Contents/Resources/frontend/tabs_chat"
+    COMMENT "Copying Vue dist files to app bundle"
+    VERBATIM
+  )
 
   foreach(_suffix_list ${CEF_HELPER_APP_SUFFIXES})
     string(REPLACE ":" ";" _suffix_list ${_suffix_list})

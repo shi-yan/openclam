@@ -25,6 +25,13 @@
 #include "tests/shared/browser/main_message_loop.h"
 #include "tests/shared/common/client_switches.h"
 
+// Forward-declare the C++ impl so ObjC classes can hold a pointer to it.
+namespace client { class RootWindowMacImpl; }
+
+// ===========================================================================
+// ObjC class interfaces
+// ===========================================================================
+
 @interface RootWindowDelegate : NSObject <NSWindowDelegate> {
  @private
   NSWindow* window_;
@@ -44,9 +51,6 @@
 - (IBAction)reload:(id)sender;
 - (IBAction)stopLoading:(id)sender;
 - (IBAction)takeURLStringValueFrom:(NSTextField*)sender;
-- (IBAction)tabButtonClicked:(id)sender;
-- (IBAction)tabCloseButtonClicked:(id)sender;
-- (IBAction)newTabButtonClicked:(id)sender;
 @end
 
 namespace client {
@@ -57,11 +61,11 @@ namespace {
 #define BUTTON_WIDTH 72
 #define BUTTON_MARGIN 8
 #define URLBAR_HEIGHT 32
-#define TABBAR_HEIGHT 36
-#define TAB_MAX_WIDTH 200
-#define TAB_MIN_WIDTH 80
-#define TAB_CLOSE_SIZE 16
-#define TAB_PADDING 6
+
+// Left panel: sessions Vue browser.
+#define LEFT_PANEL_WIDTH 220
+// Right panel: tabs+chat Vue browser.
+#define RIGHT_PANEL_WIDTH 280
 
 NSButton* MakeButton(NSRect* rect, NSString* title, NSView* parent) {
   NSButton* button = [[NSButton alloc] initWithFrame:*rect];
@@ -78,127 +82,73 @@ NSButton* MakeButton(NSRect* rect, NSString* title, NSView* parent) {
 
 NSRect ClampNSBoundsToWorkArea(const NSRect& frame_bounds,
                                const CefRect& display_bounds,
-                               const CefRect& work_area) {
-  NSRect bounds = frame_bounds;
-  const int work_area_y =
-      display_bounds.height - work_area.height - work_area.y;
-  if (bounds.size.width > work_area.width) bounds.size.width = work_area.width;
-  if (bounds.size.height > work_area.height)
-    bounds.size.height = work_area.height;
-  if (bounds.origin.x < work_area.x)
-    bounds.origin.x = work_area.x;
-  else if (bounds.origin.x + bounds.size.width >= work_area.x + work_area.width)
-    bounds.origin.x = work_area.x + work_area.width - bounds.size.width;
-  if (bounds.origin.y < work_area_y)
-    bounds.origin.y = work_area_y;
-  else if (bounds.origin.y + bounds.size.height >=
-           work_area_y + work_area.height)
-    bounds.origin.y = work_area_y + work_area.height - bounds.size.height;
-  return bounds;
-}
+                               bool set_origin);
 
 void GetNSBoundsInDisplay(const CefRect& dip_bounds,
-                          bool input_content_bounds,
+                          bool use_content_bounds,
                           NSWindowStyleMask style_mask,
                           bool add_controls,
                           NSRect& frame_rect,
-                          NSRect& content_rect) {
-  auto display =
-      CefDisplay::GetDisplayMatchingBounds(dip_bounds, false);
-  const auto display_bounds = display->GetBounds();
-  const auto display_work_area = display->GetWorkArea();
-
-  NSRect requested_rect = NSMakeRect(dip_bounds.x, dip_bounds.y,
-                                     dip_bounds.width, dip_bounds.height);
-  requested_rect.origin.y = display_bounds.height - requested_rect.size.height -
-                             requested_rect.origin.y;
-
-  // Controls height = URL bar + tab bar.
-  const CGFloat controls_h = add_controls ? (URLBAR_HEIGHT + TABBAR_HEIGHT) : 0;
-  bool changed_content_bounds = false;
-
-  if (input_content_bounds) {
-    content_rect = requested_rect;
-    frame_rect =
-        [NSWindow frameRectForContentRect:content_rect styleMask:style_mask];
-    frame_rect.size.height += controls_h;
-    frame_rect.origin = requested_rect.origin;
-  } else {
-    frame_rect = requested_rect;
-    content_rect =
-        [NSWindow contentRectForFrameRect:frame_rect styleMask:style_mask];
-    changed_content_bounds = true;
-  }
-
-  const NSRect new_frame_rect =
-      ClampNSBoundsToWorkArea(frame_rect, display_bounds, display_work_area);
-  if (!NSEqualRects(frame_rect, new_frame_rect)) {
-    frame_rect = new_frame_rect;
-    content_rect =
-        [NSWindow contentRectForFrameRect:frame_rect styleMask:style_mask];
-    changed_content_bounds = true;
-  }
-
-  if (changed_content_bounds && add_controls) {
-    content_rect.origin.y -= controls_h;
-    content_rect.size.height -= controls_h;
-  }
-}
+                          NSRect& content_rect);
 
 }  // namespace
 
 // ===========================================================================
-// BrowserTabMac
-//
-// One tab = one BrowserWindowStdMac + per-tab state (title, url, etc.).
-// Implements BrowserWindow::Delegate so it receives CEF callbacks directly
-// and stores state on itself.  Reports to its parent (RootWindowMacImpl) via
-// three simple callbacks: OnTabReady / OnTabUpdated / OnTabDestroyed.
+// PanelBrowserDelegate — no-op delegate for Vue sidebar panel browsers.
 // ===========================================================================
 
-class RootWindowMacImpl;
+class PanelBrowserDelegate : public BrowserWindow::Delegate {
+ public:
+  bool UseAlloyStyle() const override { return true; }
+  void OnBrowserCreated(CefRefPtr<CefBrowser>) override {}
+  void OnBrowserWindowDestroyed() override {}
+  void OnSetAddress(const std::string&) override {}
+  void OnSetTitle(const std::string&) override {}
+  void OnSetFullscreen(bool) override {}
+  void OnAutoResize(const CefSize&) override {}
+  void OnContentsBounds(const CefRect&) override {}
+  void OnSetLoadingState(bool, bool, bool) override {}
+  void OnSetDraggableRegions(const std::vector<CefDraggableRegion>&) override {}
+};
 
+// ===========================================================================
+// BrowserTabMac
+// ===========================================================================
+
+// Each tab IS its own BrowserWindow::Delegate.  It owns one
+// BrowserWindowStdMac and stores per-tab state (title, url, loading, …).
+// When state changes it calls parent_->OnTabUpdated(this).
 class BrowserTabMac : public BrowserWindow::Delegate {
  public:
-  BrowserTabMac(int tab_id,
-                RootWindowMacImpl* parent,
-                bool with_controls,
-                const std::string& url)
+  BrowserTabMac(int tab_id, RootWindowMacImpl* parent,
+                bool with_controls, const std::string& url)
       : tab_id_(tab_id), parent_(parent) {
-    browser_window_ =
-        std::make_unique<BrowserWindowStdMac>(this, with_controls, url);
-    title_ = url.empty() ? "New Tab" : url;
-    url_ = url;
+    browser_window_.reset(
+        new BrowserWindowStdMac(this, with_controls, url));
   }
 
-  // Not copyable.
-  BrowserTabMac(const BrowserTabMac&) = delete;
-  BrowserTabMac& operator=(const BrowserTabMac&) = delete;
-
-  // Accessors.
   int tab_id() const { return tab_id_; }
   BrowserWindowStdMac* browser_window() { return browser_window_.get(); }
-  const std::string& title() const { return title_; }
-  const std::string& url() const { return url_; }
-  bool is_loading() const { return is_loading_; }
-  bool can_go_back() const { return can_go_back_; }
-  bool can_go_forward() const { return can_go_forward_; }
-  bool is_ready() const { return ready_; }  // browser has been created
 
-  // BrowserWindow::Delegate ------------------------------------------------
+  const std::string& title() const { return title_; }
+  const std::string& url()   const { return url_; }
+  bool is_ready()      const { return ready_; }
+  bool is_loading()    const { return is_loading_; }
+  bool can_go_back()   const { return can_go_back_; }
+  bool can_go_forward()const { return can_go_forward_; }
+
   bool UseAlloyStyle() const override;
 
   void OnBrowserCreated(CefRefPtr<CefBrowser> browser) override;
-  void OnBrowserWindowClosing() override {}
   void OnBrowserWindowDestroyed() override;
-
-  void OnSetAddress(const std::string& url) override {
-    url_ = url;
-    NotifyParent();
-  }
 
   void OnSetTitle(const std::string& title) override {
     title_ = title.empty() ? "New Tab" : title;
+    NotifyParent();
+  }
+
+  void OnSetAddress(const std::string& url) override {
+    url_ = url;
     NotifyParent();
   }
 
@@ -293,9 +243,8 @@ class RootWindowMacImpl
 
   void NotifyDestroyedIfDone();
 
-  // Tab bar helpers.
-  void CreateTabBar(NSView* contentView);
-  void RebuildTabBar();
+  // Vue panel helpers.
+  void CreateVuePanels(NSView* contentView, const CefBrowserSettings& settings);
 
   BrowserWindowStdMac* ActiveBrowserWindowStd() const;
   BrowserWindow* ActiveBrowserWindow() const;
@@ -326,7 +275,15 @@ class RootWindowMacImpl
 
   NSWindow* window_ = nil;
   RootWindowDelegate* window_delegate_ = nil;
-  NSView* tab_bar_view_ = nil;
+
+  // Vue sidebar panels (CEF browsers pointing at local HTML files).
+  NSView* left_panel_view_ = nil;      // sessions Vue browser container
+  NSView* browser_area_view_ = nil;    // center container (url bar + web content)
+  NSView* right_panel_view_ = nil;     // tabs+chat Vue browser container
+  PanelBrowserDelegate left_panel_delegate_;
+  PanelBrowserDelegate right_panel_delegate_;
+  std::unique_ptr<BrowserWindowStdMac> left_panel_browser_;
+  std::unique_ptr<BrowserWindowStdMac> right_panel_browser_;
 
   NSButton* back_button_ = nil;
   NSButton* forward_button_ = nil;
@@ -560,17 +517,16 @@ void RootWindowMacImpl::OpenNewTab(const std::string& url) {
                                               with_controls_, url);
   active_tab_idx_ = static_cast<int>(tabs_.size());
   tabs_.push_back(std::move(tab));
-  RebuildTabBar();
 
-  // Create the browser for the new tab.
-  NSView* contentView = [window_ contentView];
-  const CGFloat barsH = with_controls_ ? (URLBAR_HEIGHT + TABBAR_HEIGHT) : 0;
-  NSRect cb = [contentView bounds];
-  CefRect rect(0, 0, static_cast<int>(cb.size.width),
-               static_cast<int>(cb.size.height - barsH));
+  // Browser is a child of browser_area_view_ (right panel).
+  NSRect bab = [browser_area_view_ bounds];
+  const CGFloat urlH = with_controls_ ? URLBAR_HEIGHT : 0;
+  CefRect rect(0, 0,
+               static_cast<int>(bab.size.width),
+               static_cast<int>(bab.size.height - urlH));
 
   tabs_[active_tab_idx_]->browser_window()->CreateBrowser(
-      CAST_NSVIEW_TO_CEF_WINDOW_HANDLE(contentView), rect,
+      CAST_NSVIEW_TO_CEF_WINDOW_HANDLE(browser_area_view_), rect,
       cached_settings_, nullptr, cached_request_context_);
 }
 
@@ -607,8 +563,6 @@ void RootWindowMacImpl::SwitchToTab(int idx) {
     [window_ setTitle:
         [NSString stringWithUTF8String:new_tab->title().c_str()]];
   }
-
-  RebuildTabBar();
 }
 
 void RootWindowMacImpl::CloseTab(int idx, bool force) {
@@ -669,6 +623,7 @@ bool RootWindowMacImpl::RequestCloseAllBrowsers(bool force) {
   return any_pending;
 }
 
+
 // ---- Tab callbacks from BrowserTabMac -------------------------------------
 
 void RootWindowMacImpl::OnTabReady(BrowserTabMac* tab) {
@@ -680,27 +635,30 @@ void RootWindowMacImpl::OnTabReady(BrowserTabMac* tab) {
   }
   if (idx < 0) return;  // already in closing_tabs_, ignore
 
-  // Open a second tab automatically when the first tab of the initial window
-  // becomes ready, so the tab bar is usable immediately.
-  if (idx == 0 && tabs_.size() == 1 && !is_popup_) {
-    OpenNewTab("about:blank");
+  // Give the browser view a fill-parent autoresizing mask so it grows/shrinks
+  // with browser_area_view_ when the window or sidebar is resized.
+  NSView* v = CAST_CEF_WINDOW_HANDLE_TO_NSVIEW(
+      tab->browser_window()->GetWindowHandle());
+  if (v) {
+    [v setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
   }
 
   if (idx != active_tab_idx_) {
     // This tab was created but is not active — hide and pause immediately.
     auto browser = tab->browser_window()->GetBrowser();
     if (browser) browser->GetHost()->WasHidden(true);
-    NSView* v = CAST_CEF_WINDOW_HANDLE_TO_NSVIEW(
-        tab->browser_window()->GetWindowHandle());
     if (v) [v setHidden:YES];
+  }
+
+  // Open a second tab automatically when the first tab of the initial window
+  // becomes ready, so the sidebar is populated immediately.
+  if (idx == 0 && tabs_.size() == 1 && !is_popup_) {
+    OpenNewTab("about:blank");
   }
 }
 
 void RootWindowMacImpl::OnTabUpdated(BrowserTabMac* tab) {
   REQUIRE_MAIN_THREAD();
-
-  // Always rebuild the tab bar so titles stay current for all tabs.
-  RebuildTabBar();
 
   // Update toolbar/title only for the active tab.
   if (tabs_.empty() || tabs_[active_tab_idx_].get() != tab) return;
@@ -737,22 +695,18 @@ void RootWindowMacImpl::OnTabDestroyed(BrowserTabMac* tab) {
   // Check closing_tabs_ first (the common path for non-last tab close).
   for (auto& ct : closing_tabs_) {
     if (ct.get() == tab) {
-      // Schedule removal after the call stack unwinds to avoid destroying
-      // the BrowserTabMac object while we're inside its method.
       MAIN_POST_CLOSURE(base::BindOnce(
-          [](scoped_refptr<RootWindowMacImpl> impl) {
+          [](scoped_refptr<RootWindowMacImpl> impl, BrowserTabMac* dead) {
             impl->closing_tabs_.erase(
                 std::remove_if(impl->closing_tabs_.begin(),
                                impl->closing_tabs_.end(),
-                               [](const std::unique_ptr<BrowserTabMac>& t) {
-                                 return !t->is_ready();
-                                 // is_ready() stays true even after destroy;
-                                 // use a different sentinel.
+                               [dead](const std::unique_ptr<BrowserTabMac>& t) {
+                                 return t.get() == dead;
                                }),
                 impl->closing_tabs_.end());
             impl->NotifyDestroyedIfDone();
           },
-          scoped_refptr<RootWindowMacImpl>(this)));
+          scoped_refptr<RootWindowMacImpl>(this), tab));
       return;
     }
   }
@@ -767,7 +721,6 @@ void RootWindowMacImpl::OnTabDestroyed(BrowserTabMac* tab) {
         active_tab_idx_ = std::max(0, static_cast<int>(tabs_.size()) - 1);
 
       if (tabs_.empty()) {
-        // Last tab gone — close the window.
         MAIN_POST_CLOSURE(base::BindOnce(
             [](scoped_refptr<RootWindowMacImpl> impl) {
               impl->Close(true);
@@ -778,7 +731,6 @@ void RootWindowMacImpl::OnTabDestroyed(BrowserTabMac* tab) {
             [](scoped_refptr<RootWindowMacImpl> impl, int idx,
                std::unique_ptr<BrowserTabMac> dead) {
               impl->SwitchToTab(idx);
-              // dead goes out of scope here (after the stack is clear).
             },
             scoped_refptr<RootWindowMacImpl>(this),
             active_tab_idx_,
@@ -789,106 +741,72 @@ void RootWindowMacImpl::OnTabDestroyed(BrowserTabMac* tab) {
   }
 }
 
-// ---- Tab bar ---------------------------------------------------------------
+// ---- Vue panel browsers ----------------------------------------------------
 
-void RootWindowMacImpl::CreateTabBar(NSView* contentView) {
-  const CGFloat totalH = [contentView bounds].size.height;
-  const CGFloat totalW = [contentView bounds].size.width;
-  NSRect barRect = NSMakeRect(0, totalH - TABBAR_HEIGHT, totalW, TABBAR_HEIGHT);
+void RootWindowMacImpl::CreateVuePanels(NSView* contentView,
+                                         const CefBrowserSettings& settings) {
+  const NSRect cb = [contentView bounds];
+  const CGFloat cH = cb.size.height;
 
-  tab_bar_view_ = [[NSView alloc] initWithFrame:barRect];
+  // Left panel container (sessions Vue browser).
+  left_panel_view_ = [[NSView alloc] initWithFrame:
+      NSMakeRect(0, 0, LEFT_PANEL_WIDTH, cH)];
 #if !__has_feature(objc_arc)
-  [tab_bar_view_ autorelease];
+  [left_panel_view_ autorelease];
 #endif
-  [tab_bar_view_ setAutoresizingMask:(NSViewWidthSizable | NSViewMinYMargin)];
-  [tab_bar_view_ setWantsLayer:YES];
-  tab_bar_view_.layer.backgroundColor =
-      [[NSColor colorWithCalibratedWhite:0.88f alpha:1.f] CGColor];
-  [contentView addSubview:tab_bar_view_];
+  [left_panel_view_ setAutoresizingMask:NSViewHeightSizable];
+  [contentView addSubview:left_panel_view_];
 
-  RebuildTabBar();
-}
-
-void RootWindowMacImpl::RebuildTabBar() {
-  if (!tab_bar_view_) return;
-
-  for (NSView* v in [[tab_bar_view_ subviews] copy])
-    [v removeFromSuperview];
-
-  const CGFloat barW = [tab_bar_view_ bounds].size.width;
-  const CGFloat barH = [tab_bar_view_ bounds].size.height;
-  const int n = static_cast<int>(tabs_.size());
-  const CGFloat plusW = 28;
-  const CGFloat availW = barW - plusW - TAB_PADDING * 2;
-  const CGFloat tabW = n > 0
-      ? std::min<CGFloat>(TAB_MAX_WIDTH,
-                          std::max<CGFloat>(TAB_MIN_WIDTH, availW / n))
-      : TAB_MAX_WIDTH;
-
-  CGFloat x = TAB_PADDING;
-  for (int i = 0; i < n; ++i) {
-    const bool active = (i == active_tab_idx_);
-    NSString* title =
-        [NSString stringWithUTF8String:tabs_[i]->title().c_str()];
-
-    // Tab container.
-    NSView* tv = [[NSView alloc] initWithFrame:NSMakeRect(x, 2, tabW, barH - 4)];
+  // Right panel container (tabs+chat Vue browser).
+  right_panel_view_ = [[NSView alloc] initWithFrame:
+      NSMakeRect(cb.size.width - RIGHT_PANEL_WIDTH, 0, RIGHT_PANEL_WIDTH, cH)];
 #if !__has_feature(objc_arc)
-    [tv autorelease];
+  [right_panel_view_ autorelease];
 #endif
-    [tv setWantsLayer:YES];
-    tv.layer.cornerRadius = 4.f;
-    tv.layer.backgroundColor = active
-        ? [[NSColor whiteColor] CGColor]
-        : [[NSColor colorWithCalibratedWhite:0.78f alpha:1.f] CGColor];
-    [tab_bar_view_ addSubview:tv];
+  [right_panel_view_ setAutoresizingMask:NSViewHeightSizable | NSViewMinXMargin];
+  [contentView addSubview:right_panel_view_];
 
-    // Title button.
-    NSRect tr = NSMakeRect(4, 0, tabW - TAB_CLOSE_SIZE - 8, barH - 4);
-    NSButton* tb = [[NSButton alloc] initWithFrame:tr];
-#if !__has_feature(objc_arc)
-    [tb autorelease];
-#endif
-    [tb setTitle:title];
-    [tb setBezelStyle:NSBezelStyleInline];
-    [tb setBordered:NO];
-    [tb setAlignment:NSTextAlignmentLeft];
-    [tb setFont:[NSFont systemFontOfSize:11.f]];
-    [tb setTag:i];
-    [tb setTarget:window_delegate_];
-    [tb setAction:@selector(tabButtonClicked:)];
-    [tv addSubview:tb];
+  // Resolve the path to the Vue dist files inside the app bundle.
+  NSBundle* bundle = [NSBundle mainBundle];
+  NSString* sessionsPath = [bundle pathForResource:@"index"
+                                            ofType:@"html"
+                                       inDirectory:@"frontend/sessions"];
+  NSString* tabsChatPath = [bundle pathForResource:@"index"
+                                            ofType:@"html"
+                                       inDirectory:@"frontend/tabs_chat"];
 
-    // Close button.
-    const CGFloat cy = (barH - 4 - TAB_CLOSE_SIZE) / 2;
-    NSButton* cb = [[NSButton alloc] initWithFrame:
-        NSMakeRect(tabW - TAB_CLOSE_SIZE - 4, cy, TAB_CLOSE_SIZE, TAB_CLOSE_SIZE)];
-#if !__has_feature(objc_arc)
-    [cb autorelease];
-#endif
-    [cb setTitle:@"×"];
-    [cb setBezelStyle:NSBezelStyleInline];
-    [cb setBordered:NO];
-    [cb setFont:[NSFont systemFontOfSize:11.f]];
-    [cb setTag:(1000 + i)];
-    [cb setTarget:window_delegate_];
-    [cb setAction:@selector(tabCloseButtonClicked:)];
-    [tv addSubview:cb];
-
-    x += tabW + 2;
+  if (!sessionsPath) {
+    LOG(WARNING) << "Sessions Vue panel HTML not found in bundle resources. "
+                    "Run cmake --build to copy Vue dist files.";
+  }
+  if (!tabsChatPath) {
+    LOG(WARNING) << "Tabs/chat Vue panel HTML not found in bundle resources. "
+                    "Run cmake --build to copy Vue dist files.";
   }
 
-  // "+" button.
-  NSButton* plus = [[NSButton alloc] initWithFrame:
-      NSMakeRect(x + 2, (barH - 20) / 2, plusW, 20)];
-#if !__has_feature(objc_arc)
-  [plus autorelease];
-#endif
-  [plus setTitle:@"+"];
-  [plus setBezelStyle:NSBezelStyleSmallSquare];
-  [plus setTarget:window_delegate_];
-  [plus setAction:@selector(newTabButtonClicked:)];
-  [tab_bar_view_ addSubview:plus];
+  // Create sessions panel browser.
+  std::string sessions_url = sessionsPath
+      ? "file://" + std::string([sessionsPath UTF8String])
+      : "about:blank";
+  left_panel_browser_.reset(new BrowserWindowStdMac(
+      &left_panel_delegate_, /*with_controls=*/false, sessions_url));
+  const CefRect left_rect(0, 0, LEFT_PANEL_WIDTH, static_cast<int>(cH));
+  left_panel_browser_->CreateBrowser(
+      CAST_NSVIEW_TO_CEF_WINDOW_HANDLE(left_panel_view_),
+      left_rect, settings, nullptr,
+      root_window_.delegate_->GetRequestContext());
+
+  // Create tabs+chat panel browser.
+  std::string tabs_chat_url = tabsChatPath
+      ? "file://" + std::string([tabsChatPath UTF8String])
+      : "about:blank";
+  right_panel_browser_.reset(new BrowserWindowStdMac(
+      &right_panel_delegate_, /*with_controls=*/false, tabs_chat_url));
+  const CefRect right_rect(0, 0, RIGHT_PANEL_WIDTH, static_cast<int>(cH));
+  right_panel_browser_->CreateBrowser(
+      CAST_NSVIEW_TO_CEF_WINDOW_HANDLE(right_panel_view_),
+      right_rect, settings, nullptr,
+      root_window_.delegate_->GetRequestContext());
 }
 
 // ---- CreateRootWindow ------------------------------------------------------
@@ -904,7 +822,7 @@ void RootWindowMacImpl::CreateRootWindow(const CefBrowserSettings& settings,
 
   const bool has_controls = !with_osr_ && with_controls_;
 
-  if (is_popup_ && has_controls) dip_bounds.height += URLBAR_HEIGHT + TABBAR_HEIGHT;
+  if (is_popup_ && has_controls) dip_bounds.height += URLBAR_HEIGHT;
 
   const NSWindowStyleMask style_mask =
       NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
@@ -941,42 +859,57 @@ void RootWindowMacImpl::CreateRootWindow(const CefBrowserSettings& settings,
   if (!with_osr_) [contentView setWantsLayer:YES];
 
   if (has_controls) {
-    const CGFloat browserH = contentBounds.size.height - URLBAR_HEIGHT - TABBAR_HEIGHT;
+    const CGFloat contentW = contentBounds.size.width;
+    const CGFloat contentH = contentBounds.size.height;
+    const CGFloat browserAreaX = LEFT_PANEL_WIDTH;
+    const CGFloat browserAreaW = contentW - LEFT_PANEL_WIDTH - RIGHT_PANEL_WIDTH;
+    const CGFloat urlH = URLBAR_HEIGHT;
+    const CGFloat browserH = contentH - urlH;
 
-    // Tab bar (top strip).
-    CreateTabBar(contentView);
+    // Create Vue sidebar panels (left: sessions, right: tabs+chat).
+    CreateVuePanels(contentView, settings);
 
-    // URL bar buttons (strip between tab bar and browser area).
+    // Center panel: url bar + web content browser.
+    browser_area_view_ = [[NSView alloc] initWithFrame:
+        NSMakeRect(browserAreaX, 0, browserAreaW, contentH)];
+#if !__has_feature(objc_arc)
+    [browser_area_view_ autorelease];
+#endif
+    [browser_area_view_ setAutoresizingMask:
+        NSViewWidthSizable | NSViewHeightSizable];
+    [contentView addSubview:browser_area_view_];
+
+    // URL bar at the top of browser_area_view_ (AppKit: high y = top).
     NSRect br;
-    br.origin.y = browserH + (URLBAR_HEIGHT - BUTTON_HEIGHT) / 2;
+    br.origin.y = browserH + (urlH - BUTTON_HEIGHT) / 2;
     br.size.height = BUTTON_HEIGHT;
     br.origin.x = BUTTON_MARGIN;
     br.size.width = BUTTON_WIDTH;
 
-    back_button_ = MakeButton(&br, @"Back", contentView);
+    back_button_ = MakeButton(&br, @"Back", browser_area_view_);
     [back_button_ setTarget:window_delegate_];
     [back_button_ setAction:@selector(goBack:)];
     [back_button_ setEnabled:NO];
 
-    forward_button_ = MakeButton(&br, @"Forward", contentView);
+    forward_button_ = MakeButton(&br, @"Forward", browser_area_view_);
     [forward_button_ setTarget:window_delegate_];
     [forward_button_ setAction:@selector(goForward:)];
     [forward_button_ setEnabled:NO];
 
-    reload_button_ = MakeButton(&br, @"Reload", contentView);
+    reload_button_ = MakeButton(&br, @"Reload", browser_area_view_);
     [reload_button_ setTarget:window_delegate_];
     [reload_button_ setAction:@selector(reload:)];
     [reload_button_ setEnabled:NO];
 
-    stop_button_ = MakeButton(&br, @"Stop", contentView);
+    stop_button_ = MakeButton(&br, @"Stop", browser_area_view_);
     [stop_button_ setTarget:window_delegate_];
     [stop_button_ setAction:@selector(stopLoading:)];
     [stop_button_ setEnabled:NO];
 
     br.origin.x += BUTTON_MARGIN;
-    br.size.width = contentBounds.size.width - br.origin.x - BUTTON_MARGIN;
+    br.size.width = browserAreaW - br.origin.x - BUTTON_MARGIN;
     url_textfield_ = [[NSTextField alloc] initWithFrame:br];
-    [contentView addSubview:url_textfield_];
+    [browser_area_view_ addSubview:url_textfield_];
     [url_textfield_ setAutoresizingMask:(NSViewWidthSizable | NSViewMinYMargin)];
     [url_textfield_ setTarget:window_delegate_];
     [url_textfield_ setAction:@selector(takeURLStringValueFrom:)];
@@ -984,20 +917,21 @@ void RootWindowMacImpl::CreateRootWindow(const CefBrowserSettings& settings,
     [[url_textfield_ cell] setWraps:NO];
     [[url_textfield_ cell] setScrollable:YES];
 
+    // First tab browser fills browser_area_view_ below the url bar.
     const CefRect cef_rect(0, 0,
-                           static_cast<int>(contentBounds.size.width),
+                           static_cast<int>(browserAreaW),
                            static_cast<int>(browserH));
 
     if (!is_popup_) {
       DCHECK(!tabs_.empty());
       tabs_[0]->browser_window()->CreateBrowser(
-          CAST_NSVIEW_TO_CEF_WINDOW_HANDLE(contentView), cef_rect,
+          CAST_NSVIEW_TO_CEF_WINDOW_HANDLE(browser_area_view_), cef_rect,
           settings, nullptr, root_window_.delegate_->GetRequestContext());
       cached_request_context_ = root_window_.delegate_->GetRequestContext();
     } else {
       browser_window_->ShowPopup(
-          CAST_NSVIEW_TO_CEF_WINDOW_HANDLE(contentView), 0, 0,
-          static_cast<size_t>(contentBounds.size.width),
+          CAST_NSVIEW_TO_CEF_WINDOW_HANDLE(browser_area_view_), 0, 0,
+          static_cast<size_t>(browserAreaW),
           static_cast<size_t>(browserH));
     }
   } else {
@@ -1074,29 +1008,31 @@ void RootWindowMacImpl::OnSetFullscreen(bool fullscreen) {
   if (browser) {
     std::unique_ptr<window_test::WindowTestRunnerMac> runner(
         new window_test::WindowTestRunnerMac());
-    if (fullscreen) runner->Maximize(browser);
-    else runner->Restore(browser);
+    if (fullscreen)
+      runner->Maximize(browser);
+    else
+      runner->Restore(browser);
   }
 }
 
 void RootWindowMacImpl::OnAutoResize(const CefSize& new_size) {
   REQUIRE_MAIN_THREAD();
   if (!window_) return;
-  CefRect dip_bounds(0, 0, static_cast<int>(new_size.width),
-                     static_cast<int>(new_size.height));
-  if (auto sb = GetWindowBoundsInScreen(window_)) {
-    dip_bounds.x = (*sb).x;
-    dip_bounds.y = (*sb).y;
+
+  NSSize size = {static_cast<CGFloat>(new_size.width),
+                 static_cast<CGFloat>(new_size.height)};
+  if (with_controls_) {
+    size.height += URLBAR_HEIGHT;
+    size.width += LEFT_PANEL_WIDTH + RIGHT_PANEL_WIDTH;
   }
-  NSRect frame_rect, content_rect;
-  GetNSBoundsInDisplay(dip_bounds, true, [window_ styleMask], with_controls_,
-                       frame_rect, content_rect);
-  frame_rect.origin = window_.frame.origin;
-  [window_ setFrame:frame_rect display:YES];
-  Show(RootWindow::ShowNormal);
+  NSRect frame = [window_ frame];
+  frame.origin.y -= size.height - frame.size.height;
+  frame.size = [window_ frameRectForContentRect:NSMakeRect(0, 0, size.width, size.height)].size;
+  [window_ setFrame:frame display:YES];
 }
 
-void RootWindowMacImpl::OnSetLoadingState(bool isLoading, bool canGoBack,
+void RootWindowMacImpl::OnSetLoadingState(bool isLoading,
+                                           bool canGoBack,
                                            bool canGoForward) {
   REQUIRE_MAIN_THREAD();
   if (!with_controls_) return;
@@ -1139,6 +1075,66 @@ BrowserWindow* RootWindowMacImpl::ActiveBrowserWindow() const {
   if (browser_window_) return browser_window_.get();  // OSR path
   return ActiveBrowserWindowStd();
 }
+
+// ===========================================================================
+// Utility functions (defined here so they can reference constants above)
+// ===========================================================================
+
+namespace {
+
+NSRect ClampNSBoundsToWorkArea(const NSRect& frame_bounds,
+                               const CefRect& display_bounds,
+                               bool set_origin) {
+  NSRect result = frame_bounds;
+  if (set_origin) {
+    result.origin.x = std::max(result.origin.x,
+                                static_cast<CGFloat>(display_bounds.x));
+    result.origin.y = std::max(result.origin.y,
+                                static_cast<CGFloat>(display_bounds.y));
+  }
+  if (result.size.width > display_bounds.width)
+    result.size.width = display_bounds.width;
+  if (result.size.height > display_bounds.height)
+    result.size.height = display_bounds.height;
+  return result;
+}
+
+void GetNSBoundsInDisplay(const CefRect& dip_bounds,
+                          bool use_content_bounds,
+                          NSWindowStyleMask style_mask,
+                          bool add_controls,
+                          NSRect& frame_rect,
+                          NSRect& content_rect) {
+  const int x = dip_bounds.x;
+  const int y = dip_bounds.y;
+  const int width = dip_bounds.width > 0 ? dip_bounds.width : 800;
+  const int height = dip_bounds.height > 0 ? dip_bounds.height : 600;
+
+  NSScreen* screen = [NSScreen mainScreen];
+  NSRect screen_rect = [screen visibleFrame];
+
+  if (use_content_bounds) {
+    content_rect = NSMakeRect(x, y, width, height);
+    frame_rect = [NSWindow frameRectForContentRect:content_rect
+                                         styleMask:style_mask];
+  } else {
+    frame_rect = NSMakeRect(x, y, width, height);
+    content_rect = [NSWindow contentRectForFrameRect:frame_rect
+                                           styleMask:style_mask];
+  }
+
+  // Clamp to visible screen.
+  if (frame_rect.size.width > screen_rect.size.width)
+    frame_rect.size.width = screen_rect.size.width;
+  if (frame_rect.size.height > screen_rect.size.height)
+    frame_rect.size.height = screen_rect.size.height;
+
+  // Re-derive content rect after potential size clamp.
+  content_rect = [NSWindow contentRectForFrameRect:frame_rect
+                                         styleMask:style_mask];
+}
+
+}  // namespace
 
 // ===========================================================================
 // RootWindowMac public methods
@@ -1335,18 +1331,6 @@ void RootWindowMac::OnNativeWindowClosed() { impl_->OnNativeWindowClosed(); }
   browser->GetMainFrame()->LoadURL([url UTF8String]);
 }
 
-- (IBAction)tabButtonClicked:(id)sender {
-  root_window_->SwitchToTab((int)[(NSButton*)sender tag]);
-}
-
-- (IBAction)tabCloseButtonClicked:(id)sender {
-  root_window_->CloseTab((int)[(NSButton*)sender tag] - 1000, /*force=*/true);
-}
-
-- (IBAction)newTabButtonClicked:(id)sender {
-  root_window_->OpenNewTab("about:blank");
-}
-
 - (void)windowDidBecomeKey:(NSNotification*)notification {
   if (auto* bw = root_window_->browser_window()) bw->SetFocus(true);
   root_window_->delegate()->OnRootWindowActivated(root_window_);
@@ -1424,3 +1408,4 @@ void RootWindowMac::OnNativeWindowClosed() { impl_->OnNativeWindowClosed(); }
 }
 
 @end
+
