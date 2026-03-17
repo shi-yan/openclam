@@ -46,3 +46,8 @@ cd build
 cmake ..
 make -j$(nproc)
 ```
+
+### Current platform focus
+This project is being developed and tested on Mac only. It is ok to break other platform for now. The current priority is to get Mac version work first.
+
+The platform priority is Mac > Linux > Windows
