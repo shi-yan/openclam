@@ -184,36 +184,237 @@ struct TabAllocated {
 
 struct CancelSignal {};
 
+// Fired by the main thread when a subscribed browser event occurs.
+// For sync-blocking events (needs_resolve=true), the worker must call
+// ResolveSyncEvent within the timeout or the main thread auto-resolves.
+struct EventNotification {
+    std::string subscription_id;  // matches SubscribeToEvent ToolResult payload
+    std::string event_type;       // "mutation" | "console_error" | "network_request" | "download"
+    std::string payload;          // JSON event data
+    bool        needs_resolve = false;
+    std::string callback_id;      // non-empty when needs_resolve=true
+};
+
 using InboxMessage = std::variant<
     ToolResult,
     UserInput,
     TabAllocated,
-    CancelSignal
+    CancelSignal,
+    EventNotification
 >;
 ```
 
 ---
 
-## Tool Categories: Worker-Local vs CEF-Dispatched
+## Tool Categories
 
-Not all tools need to go through the main thread. Tools are categorized at call time:
+Tools are split into three categories based on dispatch path:
 
-**Worker-local tools** — execute directly on the worker thread, no dispatch:
-- Vision/layout queries: given a screenshot, find bounding box of a UI element (call vision API inline)
-- JS generation: ask a sub-Claude call to produce an inject script
-- DOM parsing: parse an HTML string already in memory
-- Any pure computation or third-party API call (no CEF involvement)
+**Worker-local tools** — execute directly on the worker thread, no main thread involved:
+- Vision/layout queries (call vision API inline)
+- JS script generation (sub-Claude call)
+- DOM parsing of already-fetched HTML
+- Pure computation, third-party HTTP calls
+- `Sleep`, `CreateCronJob`, `DeleteCronJob`, `ResolveSyncEvent`
 
-**CEF-dispatched tools** — must go through the main thread via `BrowserActionRequest`:
-- Anything that calls `CefFrame`, `CefBrowserHost`, `CefBrowser`, or AppKit objects
+**CEF-dispatched tools** — must run on the main thread via `BrowserActionRequest`:
+- Anything calling `CefFrame`, `CefBrowserHost`, `CefBrowser`, or AppKit objects
+- `NavigateTo`, `InjectJS`, `TakeScreenshot`, `ReadDOM`, `SimulateClick`, etc.
 
-This split is important: routing a vision query to the main thread just to call an external HTTP API would add latency and unnecessary CefPostTask overhead. The worker thread is perfectly capable of making its own HTTP calls.
+**Subscription tools** — a new category that initiates a persistent event stream:
+- `SubscribeToEvent`, `UnsubscribeFromEvent`
+- One outbound `BrowserActionRequest` → one `ToolResult` (the `subscription_id`)
+- Then zero or more `EventNotification` inbox messages arrive asynchronously
+
+---
+
+## Event Subscriptions
+
+The request-response model is insufficient for browser automation. Many important signals are asynchronous events, not responses to a single action: DOM mutations, network requests, JS console errors, file downloads. The design extends the inbox with a new message type and adds two new tool categories.
+
+### New inbox message: EventNotification
+
+```cpp
+struct EventNotification {
+    std::string subscription_id;  // matches the SubscribeToEvent result
+    std::string event_type;       // "mutation" | "console_error" | "network_request" |
+                                  // "download_started" | ...
+    std::string payload;          // JSON event data
+    bool        needs_resolve = false;  // true for sync-blocking events (see below)
+    std::string callback_id;            // non-empty when needs_resolve=true
+};
+
+// Updated inbox variant:
+using InboxMessage = std::variant<
+    ToolResult,
+    UserInput,
+    TabAllocated,
+    CancelSignal,
+    EventNotification   // ← new
+>;
+```
+
+### New tools
+
+```cpp
+// Subscription tools (CEF-dispatched, return subscription_id in ToolResult)
+struct SubscribeToEvent {
+    std::string tab_id;
+    std::string event_type;  // "mutation" | "console_error" | "network_request" | "download"
+    std::string filter;      // optional JSON (CSS selector, URL pattern, log level, ...)
+};
+struct UnsubscribeFromEvent {
+    std::string subscription_id;
+};
+
+// Sync-event resolution (worker-local — no CEF dispatch needed;
+// the main thread already holds the callback, just needs the decision)
+struct ResolveSyncEvent {
+    std::string callback_id;
+    bool        allow;
+    std::string params;  // e.g. {"save_path": "/tmp/file.pdf"} for downloads
+};
+
+// Wait tools
+struct Sleep            { int duration_ms; };  // worker-local: std::this_thread::sleep_for
+struct WaitForCondition {                       // worker polls InjectJS until truthy or timeout
+    std::string tab_id;
+    std::string js_expr;          // e.g. "document.querySelector('.loaded') !== null"
+    int         timeout_ms   = 10000;
+    int         poll_interval_ms = 500;
+};
+```
+
+`NavigateTo` is extended with an optional `wait_for_selector`:
+```cpp
+struct NavigateTo {
+    std::string tab_id;
+    std::string url;
+    std::string wait_for_selector = "";  // if set, also polls for this selector after OnLoadEnd
+    int         selector_timeout_ms = 5000;
+};
+```
+
+### How EventNotifications flow through the loop
+
+The worker drains `EventNotification`s at two points:
+
+1. **Inside `wait_for_tool_result()`** — stash them (same as `UserInput`); do not process mid-tool-wait.
+2. **Top of the outer loop** — flush all stashed notifications into context as `tool_result` blocks (using `subscription_id` as `tool_use_id`), then continue to the next API call.
+
+This means the LLM "sees" accumulated events at the start of each turn, in chronological order. This is valid Claude API format and requires no special API support.
+
+### Synchronous blocking events (intercept-and-hold)
+
+Some browser events require a synchronous decision (allow/deny) before the browser can proceed — file downloads, permission prompts, certificate errors, auth dialogs. CEF provides callback objects for these that can be held and called from any thread.
+
+**Flow:**
+
+```
+CEF IO thread:    OnBeforeDownload fires
+Main thread:      hold CefBeforeDownloadCallback under callback_id
+                  push EventNotification{ needs_resolve=true, callback_id } to session inbox
+                  return (do NOT call callback->Continue yet)
+                        ↓  inbox
+Worker thread:    receives EventNotification (during wait or at loop top)
+                  LLM processes it, calls ResolveSyncEvent{ callback_id, allow=true/false }
+                  ResolveSyncEvent is CEF-dispatched → CefPostTask
+                        ↓  CefPostTask
+Main thread:      look up callback by callback_id
+                  call callback->Continue(allow, save_path)
+                  clean up callback map entry
+```
+
+**Timeout:** A watchdog timer on the main thread (e.g. 30s) auto-resolves with a safe default (allow for downloads, deny for permissions) and pushes an `EventNotification` marking the timeout, so the agent is aware it was preempted.
+
+**Callback map** lives in `SessionManager` (or `BrowserActionDispatcher` in Phase 3):
+```cpp
+std::unordered_map<std::string, CefRefPtr<CefBeforeDownloadCallback>> pending_download_callbacks_;
+```
+
+---
+
+## Wait Strategy and Load Verification
+
+### Where waiting happens
+
+Waiting always happens **in the worker thread**. The main thread must never block. Tools that wait either sleep inline (worker-local) or dispatch to the main thread and block `wait_for_tool_result()`.
+
+| Scenario | Tool | Mechanism |
+|---|---|---|
+| Fixed delay | `Sleep { 500 }` | Worker: `std::this_thread::sleep_for` |
+| Wait for page load | `NavigateTo` | Main thread: holds result until `OnLoadEnd` fires |
+| Wait for SPA element | `NavigateTo { wait_for_selector }` | Main thread: `OnLoadEnd` + polls `InjectJS` |
+| Wait for arbitrary condition | `WaitForCondition` | Worker: loop dispatching `InjectJS` every N ms |
+| Wait for event | `SubscribeToEvent` | Worker: blocks on inbox until `EventNotification` arrives |
+
+### Load → Wait → Verify
+
+Keep these as **separate tool calls**. Do not wrap them into a composite "super tool."
+
+Rationale: the LLM sees each intermediate result and can adapt. Composite tools hide failure modes and prevent the agent from recovering gracefully (e.g. the page loaded but to an error page — the agent should see that before deciding to verify).
+
+**Typical page automation flow:**
+
+```
+Turn 1:  navigate_to_url { url, wait_for_selector: ".product-list" }
+         → one tool call, returns when list is rendered
+Turn 2:  inject_js { "return document.querySelectorAll('.product').length" }
+         → verify expected content is present
+```
+
+For most pages: 2 tool calls, not 3. The "wait" is baked into `NavigateTo`.
+
+For pages that need extra time beyond `OnLoadEnd` and a known selector:
+
+```
+Turn 1:  navigate_to_url { url }
+         → returns on OnLoadEnd
+Turn 2:  wait_for_condition { js_expr: "window.__appReady === true", timeout_ms: 10000 }
+         → polls until app signals readiness
+Turn 3:  inject_js { verification script }
+```
+
+**Never add artificial fixed sleeps when a condition-based wait is possible.** Fixed sleeps are fragile and slow. Reserve `Sleep` for cases like "wait for an animation to finish" where there is no observable DOM condition to poll.
 
 ---
 
 ## Agent Loop (Worker Thread)
 
 The loop runs entirely on the worker thread. All blocking is done here; the UI thread is never blocked.
+
+### Interrupt Handling
+
+The inbox is the interrupt buffer. Regardless of what the worker is doing, the main thread can always `inbox.enqueue()` without blocking. The worker drains it at the right time for each phase.
+
+```
+Phase                  │ UserInput / EventNotification │ CancelSignal
+───────────────────────┼───────────────────────────────┼──────────────────────────────
+API streaming          │ queue in inbox; flushed next   │ cancel_requested atomic flag;
+(blocking HTTP call)   │ turn — LLM finishes current    │ streaming callback checks it
+                       │ generation first               │ between chunks → aborts early
+───────────────────────┼───────────────────────────────┼──────────────────────────────
+Tool wait              │ stashed in deferred{}; flushed │ wait_for_tool_result() throws
+(wait_for_tool_result) │ to context at loop top after   │ CancelledError immediately
+                       │ tool returns                   │
+───────────────────────┼───────────────────────────────┼──────────────────────────────
+Between turns          │ try_dequeue() drains all;      │ detected in try_dequeue()
+(loop top drain)       │ written to context before      │ loop → returns immediately
+                       │ next API call                  │
+```
+
+**Why UserInput during streaming isn't discarded:** it queues in the inbox, is stashed into `deferred.user_inputs` at loop top after streaming finishes, and is written to context before the next API call. The LLM sees it on the very next turn. The UX implication is that the agent finishes generating its current response before incorporating the new message — consistent with how chat interfaces work.
+
+**The two-step cancel mechanism:**
+`Session::cancel()` does both in order:
+```cpp
+cancel_requested.store(true);  // 1. abort streaming callback between chunks
+inbox.enqueue(CancelSignal{});  // 2. wake up wait_for_tool_result() if blocking
+worker_thread.join();
+```
+Both are needed because the worker is in one of two blocking states at any time: inside the HTTP streaming call (needs the atomic), or inside `inbox.wait_dequeue_timed()` (needs the enqueued signal).
+
+**`needs_resolve` events during streaming:** a sync-blocking event (e.g. download intercept) that arrives while the LLM is generating is handled by the main thread's watchdog timer. The watchdog auto-resolves after N seconds with a safe default and pushes an `EventNotification` with `timed_out=true` to the inbox. When the LLM finishes and the loop top flushes the inbox, the agent sees it as a regular event — it just learns the decision was made on its behalf.
 
 ### Context Storage in SQLite
 
@@ -231,26 +432,33 @@ Each row in the `context` table is one complete Claude message in JSON format (C
 When the worker dispatches a CEF tool and blocks waiting for the result, other inbox messages (e.g., `UserInput`, `CancelSignal`) may arrive before the `ToolResult`. The inner wait loop drains non-result messages into a stash, processes them after the result arrives:
 
 ```cpp
+struct DeferredItems {
+    std::vector<UserInput>           user_inputs;
+    std::vector<EventNotification>   notifications;  // async events that arrived mid-wait
+};
+
 ToolResult wait_for_tool_result(const std::string& expected_req_id,
-                                std::vector<UserInput>& deferred_inputs) {
+                                DeferredItems& deferred) {
     while (true) {
         InboxMessage msg;
         bool got = inbox.wait_dequeue_timed(msg, std::chrono::seconds(120));
 
-        if (!got) {
-            throw ToolTimeoutError{expected_req_id};
-        }
+        if (!got) throw ToolTimeoutError{expected_req_id};
 
-        if (auto* cancel = std::get_if<CancelSignal>(&msg)) {
+        if (std::holds_alternative<CancelSignal>(msg))
             throw CancelledError{};
-        }
+
         if (auto* input = std::get_if<UserInput>(&msg)) {
-            deferred_inputs.push_back(std::move(*input));  // stash, handle after
+            deferred.user_inputs.push_back(std::move(*input));
+            continue;
+        }
+        if (auto* ev = std::get_if<EventNotification>(&msg)) {
+            deferred.notifications.push_back(std::move(*ev));
             continue;
         }
         if (auto* result = std::get_if<ToolResult>(&msg)) {
-            // guard against stale results if we ever pipeline
             if (result->request_id == expected_req_id) return std::move(*result);
+            // stale result from a previous subscription — discard
         }
     }
 }
@@ -260,27 +468,41 @@ ToolResult wait_for_tool_result(const std::string& expected_req_id,
 
 ```cpp
 void Session::run_agent_loop() {
-    std::vector<UserInput> deferred_inputs;
+    DeferredItems deferred;
 
     while (true) {
-        // Flush any user inputs that arrived during the last tool wait
-        for (auto& input : deferred_inputs) {
+        // Flush deferred user inputs into context
+        for (auto& input : deferred.user_inputs) {
             store->append_user_message(input.text);
         }
-        deferred_inputs.clear();
+        deferred.user_inputs.clear();
+
+        // Flush deferred event notifications into context as tool_result blocks.
+        // The LLM sees them as results of the matching subscribe tool_use_id.
+        for (auto& ev : deferred.notifications) {
+            store->append_event_notification(ev);
+            post_display_message(render_event_notification(ev));
+        }
+        deferred.notifications.clear();
 
         // 1. Build message array from SQLite context table
         auto messages = store->load_context();
 
-        // 2. Call Claude API — blocking HTTP with streaming
-        //    Text deltas are buffered; written to SQLite only when stream ends
+        // 2. Call LLM API — blocking HTTP with streaming.
+        //    cancel_requested is checked between every streamed chunk so the
+        //    worker can abort a long-running API call without waiting for the
+        //    full response.  UserInput and EventNotification that arrive during
+        //    streaming simply queue in the inbox and are flushed next turn.
         std::string text_accumulator;
-        auto response = claude_api_.complete(messages, tools_, [&](Delta delta) {
-            if (delta.is_text()) {
-                text_accumulator += delta.text;
-                post_display_message(delta.text, /*is_streaming=*/true);
-            }
-        });
+        auto response = llm_client_->complete(messages, tools_,
+            [&](Delta delta) {
+                if (cancel_requested_.load(std::memory_order_relaxed))
+                    throw CancelledError{};
+                if (delta.is_text()) {
+                    text_accumulator += delta.text;
+                    post_display_message(delta.text, /*is_streaming=*/true);
+                }
+            });
 
         // Write full assistant turn to both context and chat_history
         store->append_assistant_turn(text_accumulator, response.tool_calls);
@@ -308,7 +530,7 @@ void Session::run_agent_loop() {
                     post_browser_action(req_id, tool_call);
 
                     try {
-                        auto result = wait_for_tool_result(req_id, deferred_inputs);
+                        auto result = wait_for_tool_result(req_id, deferred);
                         store->append_tool_result(tool_call.id, result);
                         post_display_message(render_tool_result(result));
                     } catch (const ToolTimeoutError&) {
@@ -325,11 +547,14 @@ void Session::run_agent_loop() {
             // loop continues — deferred_inputs flushed at top of next iteration
         }
 
-        // Poll for user input between turns (non-blocking)
+        // Drain inbox between turns (non-blocking).
+        // EventNotifications and UserInputs are stashed for the next iteration.
         InboxMessage msg;
         while (inbox.try_dequeue(msg)) {
             if (std::holds_alternative<UserInput>(msg)) {
-                deferred_inputs.push_back(std::get<UserInput>(std::move(msg)));
+                deferred.user_inputs.push_back(std::get<UserInput>(std::move(msg)));
+            } else if (std::holds_alternative<EventNotification>(msg)) {
+                deferred.notifications.push_back(std::get<EventNotification>(std::move(msg)));
             } else if (std::holds_alternative<CancelSignal>(msg)) {
                 post_status(SessionStatus::Cancelled);
                 return;
@@ -399,30 +624,48 @@ The worker builds the tool spec array for each API call by iterating `kTools` an
 
 ```cpp
 // CEF-dispatched actions
-struct NavigateTo     { std::string tab_id; std::string url; };
+struct NavigateTo {
+    std::string tab_id;
+    std::string url;
+    std::string wait_for_selector = "";   // if set, also waits for this selector post-OnLoadEnd
+    int         selector_timeout_ms = 5000;
+};
 struct InjectJS       { std::string tab_id; std::string script; };  // returns JSON result
-struct TakeScreenshot { std::string tab_id; };                      // returns file path to PNG
+struct TakeScreenshot { std::string tab_id; };                       // returns file path to PNG
 struct ReadDOM        { std::string tab_id; std::string selector; };
-struct SimulateClick  { std::string tab_id; int x; int y; MouseButton btn; };
+struct SimulateClick  { std::string tab_id; int x; int y; int button = 0; };  // 0=left 1=right 2=mid
 struct SimulateKey    { std::string tab_id; std::string key; std::string modifiers; };
 struct TypeText       { std::string tab_id; std::string text; };
 struct ScrollPage     { std::string tab_id; int delta_x; int delta_y; };
-struct GetElementRect { std::string tab_id; std::string selector; };   // returns DOMRect as JSON
-struct ReadConsoleLog { std::string tab_id; };  // Phase 6 — CefDevToolsMessageObserver
-struct OpenNewTab     { std::string initial_url; };    // returns new tab_id via TabAllocated
+struct GetElementRect { std::string tab_id; std::string selector; };  // returns DOMRect as JSON
+struct ReadConsoleLog { std::string tab_id; };  // Phase 6 — CefDevToolsMessageObserver ring buffer
+struct OpenNewTab     { std::string initial_url; };   // result arrives via TabAllocated inbox msg
 struct CloseTab       { std::string tab_id; };
 struct FocusTab       { std::string tab_id; };
+// Subscription tools (return subscription_id in ToolResult; then fire EventNotifications)
+struct SubscribeToEvent   { std::string tab_id; std::string event_type; std::string filter; };
+struct UnsubscribeFromEvent { std::string subscription_id; };
 
-// Worker-local actions — executed directly on worker thread, no dispatch needed
-struct CreateCronJob  { std::string schedule; std::string prompt; std::string model; };
-struct DeleteCronJob  { std::string cron_id; };
-struct ListCronJobs   { };
+// Worker-local actions — no dispatch needed
+struct Sleep            { int duration_ms; };
+struct WaitForCondition {
+    std::string tab_id;
+    std::string js_expr;
+    int         timeout_ms       = 10000;
+    int         poll_interval_ms = 500;
+};
+struct ResolveSyncEvent { std::string callback_id; bool allow; std::string params; };
+struct CreateCronJob    { std::string schedule; std::string prompt; std::string model; };
+struct DeleteCronJob    { std::string cron_id; };
+struct ListCronJobs     { };
 
 using BrowserAction = std::variant<
     NavigateTo, InjectJS, TakeScreenshot, ReadDOM,
     SimulateClick, SimulateKey, TypeText, ScrollPage,
     GetElementRect, ReadConsoleLog,
-    OpenNewTab, CloseTab, FocusTab
+    OpenNewTab, CloseTab, FocusTab,
+    SubscribeToEvent, UnsubscribeFromEvent
+    // Worker-local tools are NOT in BrowserAction — they bypass the dispatcher
 >;
 ```
 
@@ -618,6 +861,88 @@ Cron job definition format in `~/.openclam/crons.json`:
 }
 ```
 
+
+---
+
+## Crash Recovery
+
+### The invariant: context is always in a consistent state
+
+The worker writes the full assistant message (including all `tool_use` blocks) to `context` atomically in a single SQLite transaction **after** the stream ends, never mid-stream. This means the context table is always at a clean message boundary — no partial writes to recover from.
+
+The only inconsistent state possible is: **assistant message written, but its `tool_result`(s) not yet written** (i.e. the app was killed while a tool was in-flight). This is the case we need to detect and repair.
+
+### Tracking in-flight tool calls: `pending_tool_calls`
+
+A dedicated table tracks exactly which tool calls are currently awaiting results:
+
+```sql
+-- Rows are inserted when a tool is dispatched, deleted when the result arrives.
+-- Any rows present at startup = interrupted in-flight calls.
+CREATE TABLE pending_tool_calls (
+    tool_use_id   TEXT PRIMARY KEY,   -- Claude's tool_use block id (from API response)
+    request_id    TEXT NOT NULL,      -- our BrowserActionRequest UUID
+    tool_name     TEXT NOT NULL,
+    args_json     TEXT NOT NULL,
+    dispatched_at INTEGER NOT NULL
+);
+```
+
+Worker lifecycle per tool call:
+```cpp
+// Before dispatching:
+store->insert_pending_tool_call(tool_use_id, req_id, tool_name, args_json);
+post_browser_action(req_id, tool_call);
+
+// After result arrives:
+store->delete_pending_tool_call(tool_use_id);
+store->append_tool_result(tool_use_id, result);
+```
+
+### Recovery on app restart
+
+On startup, `SessionManager::restore_sessions()` scans `~/.openclam/sessions/` for sessions in non-terminal states and applies one of three recovery paths:
+
+**Path A — `status = waiting_for_tool` (crashed during tool execution)**
+
+```
+pending_tool_calls has rows → in-flight calls need synthetic results
+
+For each row in pending_tool_calls:
+  1. Inject synthetic tool_result into context:
+       { "error": "App restarted while this tool was executing. Result unknown." }
+  2. Write to chat_history as a system message so the user sees it
+  3. Delete from pending_tool_calls
+
+Set status = running
+Offer to user: "Session X was interrupted — resume?"
+If yes: restart worker thread (it will re-call the LLM with the injected failures)
+```
+
+The agent receives the failure results on the next API call. It knows what was attempted (from its own prior tool_use blocks) and decides whether to retry, navigate away, or ask the user. This is the right place to make that decision.
+
+**Path B — `status = running` (crashed mid-streaming)**
+
+The context table ends cleanly at the last complete message (no partial assistant turn). `pending_tool_calls` is empty. No injection needed. Just restart the worker — it calls `store->load_context()` and re-calls the LLM from the clean state.
+
+**Path C — `status = waiting_for_user`**
+
+Worker was not running. Context and chat_history are clean. Show history in the chat panel; the session resumes when the user sends input.
+
+### LLM API timeout
+
+No tool was dispatched, so `pending_tool_calls` is empty and context is clean. The worker retries with exponential backoff (see API Shim section). After N retries:
+- Mark session `Failed`, persist diagnostic to `session_meta.status_detail`
+- Do NOT inject anything into context — the last user message stands
+- On manual restart, the user can try again; the session resumes from the clean state
+
+### Browser event handling timeout (sync-blocking watchdog)
+
+Not a session failure. The main thread auto-resolves the held CEF callback with a safe default, then pushes:
+```cpp
+EventNotification { needs_resolve=false, timed_out=true, callback_id, ... }
+```
+The session continues normally. The agent is informed on the next turn and decides whether to retry the triggering action. Only if the agent itself gives up does the session fail.
 
 ---
 

@@ -46,6 +46,21 @@ endif()
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CEF_ROOT}/cmake")
 
+# ---------------------------------------------------------------------------
+# External dependencies
+# ---------------------------------------------------------------------------
+include(FetchContent)
+
+# moodycamel/concurrentqueue — lock-free MPMC / blocking queue (header-only)
+FetchContent_Declare(
+  concurrentqueue
+  URL https://github.com/cameron314/concurrentqueue/archive/refs/tags/v1.0.4.tar.gz
+)
+FetchContent_GetProperties(concurrentqueue)
+if(NOT concurrentqueue_POPULATED)
+  FetchContent_Populate(concurrentqueue)
+endif()
+
 # Load the CEF configuration (sets OS_MAC/OS_LINUX/OS_WINDOWS, compiler flags,
 # CEF_LIBCEF_DLL_WRAPPER_PATH, CEF_HELPER_APP_SUFFIXES, CEF_STANDARD_LIBS,
 # CEF_BINARY_FILES, CEF_RESOURCE_FILES, etc.)
@@ -154,6 +169,20 @@ set(CEFCLIENT_BROWSER_BROWSER_SRCS
   browser/window_test_runner_views.h
   )
 source_group(cefclient\\\\browser FILES ${CEFCLIENT_BROWSER_BROWSER_SRCS})
+
+# Agent subsystem sources (platform-independent C++17)
+set(CEFCLIENT_AGENT_SRCS
+  agent/id_utils.h
+  agent/messages.h
+  agent/session.cc
+  agent/session.h
+  agent/session_manager.cc
+  agent/session_manager.h
+  agent/session_store.cc
+  agent/session_store.h
+  agent/types.h
+  )
+source_group(cefclient\\\\agent FILES ${CEFCLIENT_AGENT_SRCS})
 
 set(CEFCLIENT_BROWSER_SHARED_BROWSER_SRCS
   shared/browser/client_app_browser.cc
@@ -518,6 +547,7 @@ if(OS_MAC)
     ${CEFCLIENT_COMMON_SRCS}
     ${CEFCLIENT_RESOURCES_SRCS}
     ${CEFCLIENT_MAC_SRCS}
+    ${CEFCLIENT_AGENT_SRCS}
     )
 
   set(CEFCLIENT_HELPER_SRCS
@@ -560,7 +590,8 @@ if(OS_MAC)
     MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/mac/Info.plist.in
     )
   add_dependencies(${CEF_TARGET} libcef_dll_wrapper vue_build_sessions vue_build_tabs_chat)
-  target_link_libraries(${CEF_TARGET} libcef_dll_wrapper ${CEF_STANDARD_LIBS} "-framework OpenGL")
+  target_link_libraries(${CEF_TARGET} libcef_dll_wrapper ${CEF_STANDARD_LIBS} "-framework OpenGL" sqlite3)
+  target_include_directories(${CEF_TARGET} PRIVATE "${concurrentqueue_SOURCE_DIR}")
 
   COPY_MAC_FRAMEWORK("${CEF_TARGET}" "${CEF_BINARY_DIR}" "${CEF_APP}")
 
