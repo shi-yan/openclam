@@ -89,6 +89,9 @@ class SessionStore {
   // Run all pending schema migrations in order.
   void apply_migrations();
 
-  // Execute a SQL statement with no parameters; aborts on error.
+  // Execute a SQL statement with no parameters; aborts on error (for migrations).
   void exec(const std::string& sql) const;
+
+  // Like exec() but returns false on error instead of aborting.
+  bool exec_nothrow(const std::string& sql) const;
 };

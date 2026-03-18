@@ -6,7 +6,6 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
-#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -78,16 +77,13 @@ bool SessionStore::open() {
   // Busy timeout: wait up to 5 s before returning SQLITE_BUSY.
   sqlite3_busy_timeout(db_, 5000);
 
-  try {
-    exec("PRAGMA journal_mode=WAL");
-    exec("PRAGMA synchronous=NORMAL");  // safe with WAL; faster than FULL
-    apply_migrations();
-  } catch (const std::exception& e) {
-    std::fprintf(stderr, "[SessionStore] init error: %s\n", e.what());
+  if (!exec_nothrow("PRAGMA journal_mode=WAL") ||
+      !exec_nothrow("PRAGMA synchronous=NORMAL")) {
     sqlite3_close(db_);
     db_ = nullptr;
     return false;
   }
+  apply_migrations();
 
   return true;
 }
@@ -386,9 +382,21 @@ void SessionStore::exec(const std::string& sql) const {
   char* errmsg = nullptr;
   int rc = sqlite3_exec(db_, sql.c_str(), nullptr, nullptr, &errmsg);
   if (rc != SQLITE_OK) {
-    std::string msg = errmsg ? errmsg : "(unknown)";
+    std::fprintf(stderr, "[SessionStore] SQL error: %s\nSQL: %s\n",
+                 errmsg ? errmsg : "(unknown)", sql.c_str());
     sqlite3_free(errmsg);
-    throw std::runtime_error("[SessionStore] SQL error: " + msg +
-                             "\nSQL: " + sql);
+    std::abort();
   }
+}
+
+bool SessionStore::exec_nothrow(const std::string& sql) const {
+  char* errmsg = nullptr;
+  int rc = sqlite3_exec(db_, sql.c_str(), nullptr, nullptr, &errmsg);
+  if (rc != SQLITE_OK) {
+    std::fprintf(stderr, "[SessionStore] SQL error: %s\nSQL: %s\n",
+                 errmsg ? errmsg : "(unknown)", sql.c_str());
+    sqlite3_free(errmsg);
+    return false;
+  }
+  return true;
 }
