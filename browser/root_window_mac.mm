@@ -33,6 +33,50 @@ namespace client { class RootWindowMacImpl; }
 // ObjC class interfaces
 // ===========================================================================
 
+// ---------------------------------------------------------------------------
+// PanelSplitViewDelegate — draggable-divider constraints for the three panels.
+// ---------------------------------------------------------------------------
+
+@interface PanelSplitViewDelegate : NSObject <NSSplitViewDelegate>
+// assign: the views are owned by the split view; no retain cycle.
+@property(nonatomic, assign) NSView* leftPanelView;
+@property(nonatomic, assign) NSView* rightPanelView;
+@end
+
+@implementation PanelSplitViewDelegate
+
+// Only the center panel grows/shrinks when the window resizes.
+- (BOOL)splitView:(NSSplitView*)splitView
+    shouldAdjustSizeOfSubview:(NSView*)subview {
+  return subview != self.leftPanelView && subview != self.rightPanelView;
+}
+
+- (CGFloat)splitView:(NSSplitView*)splitView
+    constrainMinCoordinate:(CGFloat)proposedMinimumPosition
+              ofSubviewAt:(NSInteger)dividerIndex {
+  if (dividerIndex == 0) return 80.0;  // left panel minimum width
+  // Right divider: center panel must be ≥ 200 px.
+  return splitView.subviews[0].frame.size.width +
+         splitView.dividerThickness + 200.0;
+}
+
+- (CGFloat)splitView:(NSSplitView*)splitView
+    constrainMaxCoordinate:(CGFloat)proposedMaximumPosition
+              ofSubviewAt:(NSInteger)dividerIndex {
+  const CGFloat totalW = splitView.frame.size.width;
+  const CGFloat dt = splitView.dividerThickness;
+  if (dividerIndex == 0) {
+    // Keep center ≥ 200 and right ≥ 80.
+    return totalW - dt - 200.0 - dt - 80.0;
+  }
+  // Right divider: right panel minimum width 80 px.
+  return totalW - dt - 80.0;
+}
+
+@end
+
+// ---------------------------------------------------------------------------
+
 @interface RootWindowDelegate : NSObject <NSWindowDelegate> {
  @private
   NSWindow* window_;
@@ -263,7 +307,7 @@ class RootWindowMacImpl
   void NotifyDestroyedIfDone();
 
   // Vue panel helpers.
-  void CreateVuePanels(NSView* contentView, const CefBrowserSettings& settings);
+  void CreateVuePanels();
 
   BrowserWindowStdMac* ActiveBrowserWindowStd() const;
   BrowserWindow* ActiveBrowserWindow() const;
@@ -296,6 +340,8 @@ class RootWindowMacImpl
   RootWindowDelegate* window_delegate_ = nil;
 
   // Vue sidebar panels (CEF browsers pointing at local HTML files).
+  NSSplitView* split_view_ = nil;
+  PanelSplitViewDelegate* split_delegate_ = nil;
   NSView* left_panel_view_ = nil;      // sessions Vue browser container
   NSView* browser_area_view_ = nil;    // center container (url bar + web content)
   NSView* right_panel_view_ = nil;     // tabs+chat Vue browser container
@@ -345,6 +391,9 @@ RootWindowMacImpl::RootWindowMacImpl(RootWindowMac& root_window)
 RootWindowMacImpl::~RootWindowMacImpl() {
   REQUIRE_MAIN_THREAD();
   DCHECK(window_destroyed_);
+#if !__has_feature(objc_arc)
+  [split_delegate_ release];
+#endif
 }
 
 // ---- Init ------------------------------------------------------------------
@@ -760,95 +809,25 @@ void RootWindowMacImpl::OnTabDestroyed(BrowserTabMac* tab) {
   }
 }
 
-// ---- Vue panel browsers ----------------------------------------------------
+// ---- Vue panel views (layout + browser creation handled in CreateRootWindow)
 
-void RootWindowMacImpl::CreateVuePanels(NSView* contentView,
-                                         const CefBrowserSettings& settings) {
+void RootWindowMacImpl::CreateVuePanels() {
   CGColorRef kPanelBg =
       [NSColor colorWithCalibratedWhite:0.1f alpha:1.f].CGColor;
 
-  // ---- Left panel container (sessions Vue browser) -------------------------
   left_panel_view_ = [[NSView alloc] init];
 #if !__has_feature(objc_arc)
   [left_panel_view_ autorelease];
 #endif
-  [left_panel_view_ setTranslatesAutoresizingMaskIntoConstraints:NO];
   [left_panel_view_ setWantsLayer:YES];
   left_panel_view_.layer.backgroundColor = kPanelBg;
-  [contentView addSubview:left_panel_view_];
 
-  // ---- Right panel container (tabs+chat Vue browser) -----------------------
   right_panel_view_ = [[NSView alloc] init];
 #if !__has_feature(objc_arc)
   [right_panel_view_ autorelease];
 #endif
-  [right_panel_view_ setTranslatesAutoresizingMaskIntoConstraints:NO];
   [right_panel_view_ setWantsLayer:YES];
   right_panel_view_.layer.backgroundColor = kPanelBg;
-  [contentView addSubview:right_panel_view_];
-
-  // Use Auto Layout to pin each panel to its edge with a fixed width.
-  [NSLayoutConstraint activateConstraints:@[
-    // Left panel: leading edge, full height, fixed width.
-    [left_panel_view_.leadingAnchor
-        constraintEqualToAnchor:contentView.leadingAnchor],
-    [left_panel_view_.topAnchor
-        constraintEqualToAnchor:contentView.topAnchor],
-    [left_panel_view_.bottomAnchor
-        constraintEqualToAnchor:contentView.bottomAnchor],
-    [left_panel_view_.widthAnchor
-        constraintEqualToConstant:LEFT_PANEL_WIDTH],
-
-    // Right panel: trailing edge, full height, fixed width.
-    [right_panel_view_.trailingAnchor
-        constraintEqualToAnchor:contentView.trailingAnchor],
-    [right_panel_view_.topAnchor
-        constraintEqualToAnchor:contentView.topAnchor],
-    [right_panel_view_.bottomAnchor
-        constraintEqualToAnchor:contentView.bottomAnchor],
-    [right_panel_view_.widthAnchor
-        constraintEqualToConstant:RIGHT_PANEL_WIDTH],
-  ]];
-
-  // Force the layout engine to compute actual frames before we pass rects
-  // to CEF's CreateBrowser (which needs real pixel dimensions).
-  [contentView layoutSubtreeIfNeeded];
-
-  // Give each delegate its parent so OnBrowserCreated can stretch the
-  // CEF browser NSView to fill the container exactly.
-  left_panel_delegate_.SetParentView(left_panel_view_);
-  right_panel_delegate_.SetParentView(right_panel_view_);
-
-  // Build openclam://ui/ URLs — served by the custom scheme handler from the
-  // app bundle's Resources/frontend/ directory.  No file:// access needed.
-  const std::string kScheme = std::string(openclam_scheme::kSchemeName) + "://ui";
-  const std::string sessions_url  = kScheme + "/sessions/index.html";
-  const std::string tabs_chat_url = kScheme + "/tabs_chat/index.html";
-
-  const NSRect leftBounds  = [left_panel_view_  bounds];
-  const NSRect rightBounds = [right_panel_view_ bounds];
-
-  // Create sessions panel browser (left).
-  left_panel_browser_.reset(new BrowserWindowStdMac(
-      &left_panel_delegate_, /*with_controls=*/false, sessions_url));
-  left_panel_browser_->CreateBrowser(
-      CAST_NSVIEW_TO_CEF_WINDOW_HANDLE(left_panel_view_),
-      CefRect(0, 0,
-              static_cast<int>(leftBounds.size.width),
-              static_cast<int>(leftBounds.size.height)),
-      settings, nullptr,
-      root_window_.delegate_->GetRequestContext());
-
-  // Create tabs+chat panel browser (right).
-  right_panel_browser_.reset(new BrowserWindowStdMac(
-      &right_panel_delegate_, /*with_controls=*/false, tabs_chat_url));
-  right_panel_browser_->CreateBrowser(
-      CAST_NSVIEW_TO_CEF_WINDOW_HANDLE(right_panel_view_),
-      CefRect(0, 0,
-              static_cast<int>(rightBounds.size.width),
-              static_cast<int>(rightBounds.size.height)),
-      settings, nullptr,
-      root_window_.delegate_->GetRequestContext());
 }
 
 // ---- CreateRootWindow ------------------------------------------------------
@@ -898,39 +877,102 @@ void RootWindowMacImpl::CreateRootWindow(const CefBrowserSettings& settings,
   if (!with_osr_) [contentView setWantsLayer:YES];
 
   if (has_controls) {
-    // Create Vue sidebar panels (left/right containers with Auto Layout).
-    // Also forces the first layout pass internally.
-    CreateVuePanels(contentView, settings);
+    // Create Vue sidebar panel views (no layout yet).
+    CreateVuePanels();
 
     // Center panel: url bar + web content browser.
-    // Auto Layout pins it between the two sidebar panels, full height.
     browser_area_view_ = [[NSView alloc] init];
 #if !__has_feature(objc_arc)
     [browser_area_view_ autorelease];
 #endif
-    [browser_area_view_ setTranslatesAutoresizingMaskIntoConstraints:NO];
     [browser_area_view_ setWantsLayer:YES];
     browser_area_view_.layer.backgroundColor =
         [NSColor colorWithCalibratedWhite:0.12f alpha:1.f].CGColor;
-    [contentView addSubview:browser_area_view_];
+
+    // NSSplitView holds all three panels with draggable dividers.
+    split_view_ = [[NSSplitView alloc] init];
+#if !__has_feature(objc_arc)
+    [split_view_ autorelease];
+#endif
+    [split_view_ setVertical:YES];
+    [split_view_ setDividerStyle:NSSplitViewDividerStyleThin];
+    [split_view_ setTranslatesAutoresizingMaskIntoConstraints:NO];
+    [contentView addSubview:split_view_];
     [NSLayoutConstraint activateConstraints:@[
-      [browser_area_view_.leadingAnchor
-          constraintEqualToAnchor:left_panel_view_.trailingAnchor],
-      [browser_area_view_.trailingAnchor
-          constraintEqualToAnchor:right_panel_view_.leadingAnchor],
-      [browser_area_view_.topAnchor
+      [split_view_.leadingAnchor
+          constraintEqualToAnchor:contentView.leadingAnchor],
+      [split_view_.trailingAnchor
+          constraintEqualToAnchor:contentView.trailingAnchor],
+      [split_view_.topAnchor
           constraintEqualToAnchor:contentView.topAnchor],
-      [browser_area_view_.bottomAnchor
+      [split_view_.bottomAnchor
           constraintEqualToAnchor:contentView.bottomAnchor],
     ]];
+
+    // Add panels: left | center | right.
+    [split_view_ addSubview:left_panel_view_];
+    [split_view_ addSubview:browser_area_view_];
+    [split_view_ addSubview:right_panel_view_];
+
+    // Delegate keeps side panels fixed-width during window resize.
+    // Not autoreleased: stored as a member to outlive the split view's
+    // weak delegate reference.
+    split_delegate_ = [[PanelSplitViewDelegate alloc] init];
+    split_delegate_.leftPanelView  = left_panel_view_;
+    split_delegate_.rightPanelView = right_panel_view_;
+    split_view_.delegate = split_delegate_;
+
+    // First layout pass to get real split_view_ frame.
     [contentView layoutSubtreeIfNeeded];
 
-    // Read actual frame from the layout engine.
+    // Set initial divider positions.
+    [split_view_ setPosition:LEFT_PANEL_WIDTH ofDividerAtIndex:0];
+    const CGFloat totalW = split_view_.frame.size.width;
+    [split_view_ setPosition:(totalW - RIGHT_PANEL_WIDTH) ofDividerAtIndex:1];
+
+    // Second layout pass so panel bounds reflect the divider positions.
+    [contentView layoutSubtreeIfNeeded];
+
+    // Read actual frames for CEF browser creation.
+    const NSRect leftBounds   = [left_panel_view_  bounds];
+    const NSRect rightBounds  = [right_panel_view_ bounds];
     const NSRect centerBounds = [browser_area_view_ bounds];
     const CGFloat browserAreaW = centerBounds.size.width;
     const CGFloat contentH     = centerBounds.size.height;
     const CGFloat urlH         = URLBAR_HEIGHT;
     const CGFloat browserH     = contentH - urlH;
+
+    // Give each delegate its parent so OnBrowserCreated fills the view.
+    left_panel_delegate_.SetParentView(left_panel_view_);
+    right_panel_delegate_.SetParentView(right_panel_view_);
+
+    // Build openclam://ui/ URLs served by the custom scheme handler.
+    const std::string kScheme =
+        std::string(openclam_scheme::kSchemeName) + "://ui";
+    const std::string sessions_url  = kScheme + "/sessions/index.html";
+    const std::string tabs_chat_url = kScheme + "/tabs_chat/index.html";
+
+    // Create sessions panel browser (left).
+    left_panel_browser_.reset(new BrowserWindowStdMac(
+        &left_panel_delegate_, /*with_controls=*/false, sessions_url));
+    left_panel_browser_->CreateBrowser(
+        CAST_NSVIEW_TO_CEF_WINDOW_HANDLE(left_panel_view_),
+        CefRect(0, 0,
+                static_cast<int>(leftBounds.size.width),
+                static_cast<int>(leftBounds.size.height)),
+        settings, nullptr,
+        root_window_.delegate_->GetRequestContext());
+
+    // Create tabs+chat panel browser (right).
+    right_panel_browser_.reset(new BrowserWindowStdMac(
+        &right_panel_delegate_, /*with_controls=*/false, tabs_chat_url));
+    right_panel_browser_->CreateBrowser(
+        CAST_NSVIEW_TO_CEF_WINDOW_HANDLE(right_panel_view_),
+        CefRect(0, 0,
+                static_cast<int>(rightBounds.size.width),
+                static_cast<int>(rightBounds.size.height)),
+        settings, nullptr,
+        root_window_.delegate_->GetRequestContext());
 
     // URL bar at the top of browser_area_view_ (AppKit: high y = top).
     NSRect br;
