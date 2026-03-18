@@ -118,9 +118,23 @@ struct TabAllocated {
 // Graceful shutdown signal.  Worker must exit its loop upon receiving this.
 struct CancelSignal {};
 
+// Fired by the main thread when a browser event occurs on a subscribed tab.
+// For sync-blocking events (needs_resolve=true) the worker must call
+// ResolveSyncEvent{ callback_id } within the watchdog timeout, or the main
+// thread auto-resolves and pushes another notification with timed_out=true.
+struct EventNotification {
+  std::string subscription_id;  // returned by SubscribeToEvent ToolResult
+  std::string event_type;       // "mutation" | "console_error" | "network_request" | "download"
+  std::string payload;          // JSON event data
+  bool        needs_resolve = false;  // true for intercept-and-hold events
+  bool        timed_out     = false;  // true when watchdog auto-resolved
+  std::string callback_id;            // non-empty when needs_resolve=true
+};
+
 using InboxMessage = std::variant<
     ToolResult,
     UserInput,
     TabAllocated,
-    CancelSignal
+    CancelSignal,
+    EventNotification
 >;

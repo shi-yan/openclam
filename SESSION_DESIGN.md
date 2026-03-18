@@ -1009,34 +1009,39 @@ For session status updates, the sessions panel (`frontend/sessions/`) is updated
 
 ## Implementation Phases
 
-### Phase 1 — Core Infrastructure
+### Phase 1 — Core Infrastructure ✅
 
 **Goal:** Session objects exist, can be created/destroyed, SQLite files are managed.
 
-- [ ] `SessionStore` class: open/create SQLite file, WAL mode, schema migration
-- [ ] `Session` class: fields, status enum, lock-free inbox (`moodycamel::BlockingConcurrentQueue`)
-- [ ] `SessionManager` class: create/destroy/find sessions, no agent logic yet
-- [ ] Tab allocation: `AllocateTabRequest` flow — main thread creates a `BrowserTabMac`, assigns a tab ID, enqueues `TabAllocated`
-- [ ] Session ID and tab ID generation utilities
-- [ ] Persist tab list and session metadata to SQLite on every change
-- [ ] CMake: `FetchContent` for concurrentqueue, cpp-httplib, nlohmann/json
+- [x] `SessionStore` class: open/create SQLite file, WAL mode, schema migration
+- [x] `Session` class: fields, status enum, lock-free inbox (`moodycamel::BlockingConcurrentQueue`)
+- [x] `SessionManager` class: create/destroy/find sessions, no agent logic yet
+- [x] Tab allocation: `AllocateTabRequest` flow — main thread creates a `BrowserTabMac`, assigns a tab ID, enqueues `TabAllocated`
+- [x] Session ID and tab ID generation utilities
+- [x] Persist tab list and session metadata to SQLite on every change
+- [x] CMake: `FetchContent` for concurrentqueue; system sqlite3 linked
 
-**Deliverable:** `SessionManager::create_session()` creates a session with one tab, persists to disk, and can be destroyed cleanly.
+**Deliverable:** `SessionManager::create_session()` creates a session with one tab, persists to disk, and can be destroyed cleanly. ✅
 
 ---
 
-### Phase 2 — Agent Loop Skeleton
+### Phase 2 — Agent Loop Skeleton ✅
 
 **Goal:** Worker thread runs a loop, can receive messages, shuts down cleanly.
 
-- [ ] `Session::start()` spawns worker thread running `run_agent_loop()`
-- [ ] `wait_for_tool_result()` inner loop with deferred input stashing
-- [ ] `CefPostTask` wrappers: `post_display_message()`, `post_status()`, `post_browser_action()`
-- [ ] Main thread `on_session_message()` dispatcher: routes variants to handlers
-- [ ] Stub browser action dispatcher: receives request, immediately enqueues dummy `ToolResult`
-- [ ] `Session::cancel()`: enqueues cancel signal, joins thread with timeout
+- [x] `Session::start()` spawns worker thread running `run_agent_loop()`
+- [x] `wait_for_tool_result()` inner loop with `DeferredItems` stashing
+- [x] Post helpers: `post_display()`, `post_status()`, `post_browser_action()` in `agent_loop.cc`
+- [x] Main thread `on_session_message()` dispatcher: routes all `OutboundMessage` variants to handlers
+- [x] `handle_display_message()`: stub logs to stderr; Phase 5 will forward to Vue panel
+- [x] `handle_browser_action()`: stub enqueues dummy `ToolResult` immediately; Phase 3 replaces with real CEF dispatch
+- [x] `Session::cancel()`: sets `cancel_requested` flag, enqueues `CancelSignal`, joins worker thread
+- [x] `EventNotification` added to `InboxMessage` variant; stashed in `DeferredItems` during tool wait
+- [x] `OutboundFn` callback on `Session` decouples worker from CEF; `SessionManager::start_session()` wires it up
 
-**Deliverable:** Worker thread loops, sends dummy messages to UI, handles interleaved `UserInput` during tool waits, shuts down cleanly on cancel. No real Claude calls yet.
+**Note on threading:** In Phase 2 the `OutboundFn` calls `on_session_message()` directly from the worker thread. This is safe for the stub because `handle_browser_action` only touches `session.inbox.enqueue()` (thread-safe) and `handle_status_update` does a plain assignment to `session.status` (worker is the sole writer). Phase 5 will replace the lambda body with `CefPostTask(TID_UI, ...)` to make all main-thread operations happen on the UI thread.
+
+**Deliverable:** Worker thread loops, posts stub messages, handles interleaved `UserInput` and `EventNotification` during tool waits, shuts down cleanly on cancel. Stub browser action dispatcher returns immediately. No real Claude calls yet. ✅
 
 ---
 

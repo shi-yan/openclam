@@ -2,6 +2,8 @@
 
 #include <cstdio>
 
+#include "agent/agent_loop.h"
+
 Session::Session(std::string id, TriggerType trig, std::string mdl)
     : session_id(std::move(id)),
       trigger(trig),
@@ -11,6 +13,10 @@ Session::~Session() {
   // Ensure the worker thread is not left running if the session is destroyed
   // without an explicit cancel() call.
   cancel();
+}
+
+void Session::start() {
+  worker_thread = std::thread([this] { run_agent_loop(*this); });
 }
 
 void Session::cancel() {

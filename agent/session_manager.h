@@ -45,10 +45,22 @@ class SessionManager {
 
   // Create a new session, open its SQLite store, allocate one initial tab,
   // and persist metadata.  Returns nullptr on failure.
+  // Does NOT start the worker thread — call start_session() after setup.
   std::shared_ptr<Session> create_session(
       TriggerType        trigger,
       const std::string& initial_prompt,
       const std::string& model = "claude-opus-4-6");
+
+  // Wire up the outbound callback and spawn the worker thread.
+  // The outbound_fn posts via CefPostTask in production; in Phase 2 it is a
+  // direct stub call (acceptable because handle_browser_action only touches
+  // the thread-safe session.inbox).
+  //
+  // TODO Phase 5: replace the outbound_fn body with:
+  //   CefPostTask(TID_UI, base::BindOnce(&SessionManager::on_session_message,
+  //                                      base::Unretained(this), session_id,
+  //                                      std::move(msg)));
+  void start_session(const std::string& session_id);
 
   // Cancel the worker (if running), persist terminal status, remove from map.
   void destroy_session(const std::string& session_id);
@@ -65,7 +77,8 @@ class SessionManager {
   TabAllocator tab_allocator_;
 
   // Message handlers — all run on the main thread.
+  void handle_display_message(Session& session, DisplayMessage msg);
+  void handle_browser_action(Session& session, BrowserActionRequest req);
   void handle_allocate_tab(Session& session, AllocateTabRequest req);
   void handle_status_update(Session& session, SessionStatusUpdate upd);
-  // handle_display_message and handle_browser_action added in Phase 2/3.
 };

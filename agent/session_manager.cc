@@ -132,20 +132,17 @@ void SessionManager::on_session_message(const std::string& session_id,
       [&](auto&& m) {
         using T = std::decay_t<decltype(m)>;
 
-        if constexpr (std::is_same_v<T, AllocateTabRequest>) {
+        if constexpr (std::is_same_v<T, DisplayMessage>) {
+          handle_display_message(session, std::move(m));
+        } else if constexpr (std::is_same_v<T, BrowserActionRequest>) {
+          handle_browser_action(session, std::move(m));
+        } else if constexpr (std::is_same_v<T, AllocateTabRequest>) {
           handle_allocate_tab(session, std::move(m));
         } else if constexpr (std::is_same_v<T, SessionStatusUpdate>) {
           handle_status_update(session, std::move(m));
         } else if constexpr (std::is_same_v<T, ReloadCronSchedule>) {
           // Phase 6: reload cron scheduler here.
           std::fprintf(stderr, "[SessionManager] ReloadCronSchedule (stub)\n");
-        } else {
-          // DisplayMessage and BrowserActionRequest are handled in Phase 2/3.
-          // Log them as stubs so their arrival is visible during development.
-          std::fprintf(stderr,
-                       "[SessionManager] unhandled outbound message type"
-                       " from session %s (Phase 2/3 stub)\n",
-                       session_id.c_str());
         }
       },
       std::move(msg));
@@ -181,6 +178,96 @@ void SessionManager::handle_allocate_tab(Session& session,
 
   session.inbox.enqueue(TabAllocated{req.request_id, tab_id});
 }
+
+// ---------------------------------------------------------------------------
+
+void SessionManager::start_session(const std::string& session_id) {
+  auto session_ptr = find_session(session_id);
+  if (!session_ptr) {
+    std::fprintf(stderr,
+                 "[SessionManager] start_session: unknown session %s\n",
+                 session_id.c_str());
+    return;
+  }
+
+  // Keep a weak reference so the lambda does not extend the session lifetime.
+  std::weak_ptr<Session> weak = session_ptr;
+
+  // Build the outbound callback.  The worker thread calls this for every
+  // outbound message.  In Phase 2 we invoke on_session_message() directly
+  // from the worker thread — this is safe here because:
+  //   - handle_browser_action (stub) only touches session.inbox.enqueue(),
+  //     which is thread-safe.
+  //   - handle_status_update writes session.status (plain assignment), which
+  //     is safe because only the worker writes it.
+  //   - handle_display_message (stub) only calls fprintf, which is safe.
+  // TODO Phase 5: wrap the body with CefPostTask(TID_UI, ...) so all
+  //   on_session_message calls happen on the UI thread in production.
+  session_ptr->outbound_fn = [this, session_id](OutboundMessage msg) {
+    on_session_message(session_id, std::move(msg));
+  };
+
+  session_ptr->start();
+}
+
+// ---------------------------------------------------------------------------
+
+void SessionManager::handle_display_message(Session& /*session*/,
+                                             DisplayMessage msg) {
+  // Phase 5: forward to Vue chat panel via ExecuteJavaScript.
+  // Phase 2 stub: log to stderr so the channel is visibly exercised.
+  std::fprintf(stderr, "[SessionManager] display[%s%s]: %s\n",
+               msg.role.c_str(),
+               msg.is_thinking ? "/thinking" : "",
+               msg.text.c_str());
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 stub browser action dispatcher.
+//
+// Immediately enqueues a dummy ToolResult so the worker's wait_for_tool_result
+// can return.  Phase 3 will replace this with real CEF dispatch.
+// ---------------------------------------------------------------------------
+
+void SessionManager::handle_browser_action(Session& session,
+                                            BrowserActionRequest req) {
+  // Log the incoming action name for visibility.
+  const char* action_name = std::visit(
+      [](auto&& a) -> const char* {
+        using T = std::decay_t<decltype(a)>;
+        if constexpr (std::is_same_v<T, NavigateTo>)     return "NavigateTo";
+        if constexpr (std::is_same_v<T, InjectJS>)       return "InjectJS";
+        if constexpr (std::is_same_v<T, TakeScreenshot>) return "TakeScreenshot";
+        if constexpr (std::is_same_v<T, ReadDOM>)        return "ReadDOM";
+        if constexpr (std::is_same_v<T, SimulateClick>)  return "SimulateClick";
+        if constexpr (std::is_same_v<T, SimulateKey>)    return "SimulateKey";
+        if constexpr (std::is_same_v<T, TypeText>)       return "TypeText";
+        if constexpr (std::is_same_v<T, ScrollPage>)     return "ScrollPage";
+        if constexpr (std::is_same_v<T, GetElementRect>) return "GetElementRect";
+        if constexpr (std::is_same_v<T, ReadConsoleLog>) return "ReadConsoleLog";
+        if constexpr (std::is_same_v<T, OpenNewTab>)     return "OpenNewTab";
+        if constexpr (std::is_same_v<T, CloseTab>)       return "CloseTab";
+        if constexpr (std::is_same_v<T, FocusTab>)       return "FocusTab";
+        return "Unknown";
+      },
+      req.action);
+
+  std::fprintf(stderr,
+               "[SessionManager] BrowserAction stub: %s req_id=%s\n",
+               action_name, req.request_id.c_str());
+
+  // Enqueue a synthetic success result immediately.
+  // Phase 3 will replace this with a real CEF call that completes
+  // asynchronously and enqueues the result from its completion callback.
+  ToolResult result;
+  result.request_id = req.request_id;
+  result.success    = true;
+  result.payload    = "{\"stub\":true,\"action\":\"" +
+                      std::string(action_name) + "\"}";
+  session.inbox.enqueue(std::move(result));
+}
+
+// ---------------------------------------------------------------------------
 
 void SessionManager::handle_status_update(Session& session,
                                            SessionStatusUpdate upd) {

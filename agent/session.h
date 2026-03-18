@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <string>
 #include <thread>
@@ -11,6 +12,11 @@
 #include "agent/messages.h"
 #include "agent/session_store.h"
 #include "agent/types.h"
+
+// Callback type for posting outbound messages from the worker thread back to
+// the main thread.  In production this wraps CefPostTask(TID_UI, ...).
+// In Phase 2 stubs it may be a direct (non-thread-safe) call — see SessionManager.
+using OutboundFn = std::function<void(OutboundMessage)>;
 
 // ---------------------------------------------------------------------------
 // Session
@@ -53,7 +59,13 @@ class Session {
   // ---- Persistence ----
   std::unique_ptr<SessionStore> store;
 
-  // ---- Inbox: Main → Worker  (lock-free SPSC) ----
+  // ---- Outbound channel: Worker → Main ----
+  // Set by SessionManager before start().  The worker calls this to post
+  // messages back to the main thread.  In production this wraps
+  // CefPostTask(TID_UI, ...); in Phase 2 it is a direct stub call.
+  OutboundFn outbound_fn;
+
+  // ---- Inbox: Main → Worker  (lock-free MPSC-safe queue) ----
   // Producer: main thread.  Consumer: worker thread.
   moodycamel::BlockingConcurrentQueue<InboxMessage> inbox;
 
@@ -64,11 +76,15 @@ class Session {
   // Written by main thread, read by worker — std::atomic for safety.
   std::atomic<bool> cancel_requested{false};
 
-  // ---- Worker thread (started in Phase 2) ----
+  // ---- Worker thread ----
   std::thread worker_thread;
+
+  // Spawn the worker thread.  outbound_fn must be set before calling this.
+  // Safe to call only once per session.
+  void start();
 
   // Gracefully shut down the session.
   // Sets cancel_requested, enqueues CancelSignal, and joins the worker thread.
-  // Safe to call before the worker is started (no-op for the join).
+  // Safe to call before start() (no-op for the join).
   void cancel();
 };

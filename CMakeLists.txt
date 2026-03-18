@@ -172,6 +172,8 @@ source_group(cefclient\\\\browser FILES ${CEFCLIENT_BROWSER_BROWSER_SRCS})
 
 # Agent subsystem sources (platform-independent C++17)
 set(CEFCLIENT_AGENT_SRCS
+  agent/agent_loop.cc
+  agent/agent_loop.h
   agent/id_utils.h
   agent/messages.h
   agent/session.cc
