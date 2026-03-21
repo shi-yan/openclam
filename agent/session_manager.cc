@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cstdio>
 
+#include "agent/browser_action_dispatcher.h"
 #include "agent/id_utils.h"
 #include "agent/session.h"
 #include "agent/session_store.h"
@@ -32,7 +33,37 @@ std::string db_path_for(const std::string& session_id) {
 // ---------------------------------------------------------------------------
 
 SessionManager::SessionManager() = default;
-SessionManager::~SessionManager() = default;
+
+SessionManager::~SessionManager() {
+  BrowserActionDispatcher::destroy();
+}
+
+void SessionManager::init_dispatcher() {
+  // BrowserLookupFn: resolve a string tab_id to a raw CefBrowser*.
+  auto lookup = [this](const std::string& tab_id) -> void* {
+    auto it = tab_browsers_.find(tab_id);
+    return (it != tab_browsers_.end()) ? it->second : nullptr;
+  };
+
+  // ResultFn: deliver a ToolResult to the correct session's inbox.
+  auto on_result = [this](const std::string& session_id, ToolResult result) {
+    auto session_ptr = find_session(session_id);
+    if (session_ptr) {
+      session_ptr->inbox.enqueue(std::move(result));
+    }
+  };
+
+  BrowserActionDispatcher::create(std::move(lookup), std::move(on_result));
+}
+
+void SessionManager::register_tab_browser(const std::string& tab_id,
+                                            void* browser_ptr) {
+  tab_browsers_[tab_id] = browser_ptr;
+}
+
+void SessionManager::unregister_tab_browser(const std::string& tab_id) {
+  tab_browsers_.erase(tab_id);
+}
 
 void SessionManager::set_tab_allocator(TabAllocator allocator) {
   tab_allocator_ = std::move(allocator);
@@ -223,48 +254,20 @@ void SessionManager::handle_display_message(Session& /*session*/,
 }
 
 // ---------------------------------------------------------------------------
-// Phase 2 stub browser action dispatcher.
-//
-// Immediately enqueues a dummy ToolResult so the worker's wait_for_tool_result
-// can return.  Phase 3 will replace this with real CEF dispatch.
+// handle_browser_action — delegates to BrowserActionDispatcher
 // ---------------------------------------------------------------------------
 
-void SessionManager::handle_browser_action(Session& session,
+void SessionManager::handle_browser_action(Session& /*session*/,
                                             BrowserActionRequest req) {
-  // Log the incoming action name for visibility.
-  const char* action_name = std::visit(
-      [](auto&& a) -> const char* {
-        using T = std::decay_t<decltype(a)>;
-        if constexpr (std::is_same_v<T, NavigateTo>)     return "NavigateTo";
-        if constexpr (std::is_same_v<T, InjectJS>)       return "InjectJS";
-        if constexpr (std::is_same_v<T, TakeScreenshot>) return "TakeScreenshot";
-        if constexpr (std::is_same_v<T, ReadDOM>)        return "ReadDOM";
-        if constexpr (std::is_same_v<T, SimulateClick>)  return "SimulateClick";
-        if constexpr (std::is_same_v<T, SimulateKey>)    return "SimulateKey";
-        if constexpr (std::is_same_v<T, TypeText>)       return "TypeText";
-        if constexpr (std::is_same_v<T, ScrollPage>)     return "ScrollPage";
-        if constexpr (std::is_same_v<T, GetElementRect>) return "GetElementRect";
-        if constexpr (std::is_same_v<T, ReadConsoleLog>) return "ReadConsoleLog";
-        if constexpr (std::is_same_v<T, OpenNewTab>)     return "OpenNewTab";
-        if constexpr (std::is_same_v<T, CloseTab>)       return "CloseTab";
-        if constexpr (std::is_same_v<T, FocusTab>)       return "FocusTab";
-        return "Unknown";
-      },
-      req.action);
-
-  std::fprintf(stderr,
-               "[SessionManager] BrowserAction stub: %s req_id=%s\n",
-               action_name, req.request_id.c_str());
-
-  // Enqueue a synthetic success result immediately.
-  // Phase 3 will replace this with a real CEF call that completes
-  // asynchronously and enqueues the result from its completion callback.
-  ToolResult result;
-  result.request_id = req.request_id;
-  result.success    = true;
-  result.payload    = "{\"stub\":true,\"action\":\"" +
-                      std::string(action_name) + "\"}";
-  session.inbox.enqueue(std::move(result));
+  auto* d = BrowserActionDispatcher::instance();
+  if (!d) {
+    std::fprintf(stderr,
+                 "[SessionManager] BrowserActionDispatcher not initialised; "
+                 "dropping req_id=%s\n",
+                 req.request_id.c_str());
+    return;
+  }
+  d->dispatch(req);
 }
 
 // ---------------------------------------------------------------------------

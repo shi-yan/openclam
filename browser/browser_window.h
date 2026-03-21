@@ -45,6 +45,10 @@ class BrowserWindow : public ClientHandler::Delegate {
     // Set the window title.
     virtual void OnSetTitle(const std::string& title) = 0;
 
+    // Called when the page favicon image is downloaded. |image| will be nullptr
+    // on failure or if the downloaded image exceeds the max size.
+    virtual void OnSetFavicon(CefRefPtr<CefImage> image) {}
+
     // Set fullscreen mode.
     virtual void OnSetFullscreen(bool fullscreen) = 0;
 
@@ -139,6 +143,7 @@ class BrowserWindow : public ClientHandler::Delegate {
   void OnBrowserClosed(CefRefPtr<CefBrowser> browser) override;
   void OnSetAddress(const std::string& url) override;
   void OnSetTitle(const std::string& title) override;
+  void OnSetFavicon(CefRefPtr<CefImage> image) override;
   void OnSetFullscreen(bool fullscreen) override;
   void OnAutoResize(const CefSize& new_size) override;
   void OnContentsBounds(const CefRect& new_bounds) override;

@@ -35,7 +35,7 @@ class RootWindowMac : public RootWindow, public BrowserWindow::Delegate {
   const OsrRendererSettings* osr_settings() const;
 
   // Tab management. Must be called on the main thread.
-  void OpenNewTab(const std::string& url);
+  void OpenNewTab(const std::string& url) override;
   void SwitchToTab(int index);
   void CloseTab(int index, bool force);
   // Calls CloseBrowser on all tabs. Returns true if any browser is still

@@ -6,6 +6,8 @@
 #define CEF_TESTS_CEFCLIENT_BROWSER_BASE_CLIENT_HANDLER_H_
 #pragma once
 
+#include <functional>
+
 #include "include/cef_client.h"
 #include "include/wrapper/cef_message_router.h"
 #include "browser/test_runner.h"
@@ -112,6 +114,13 @@ class BaseClientHandler : public CefClient,
   HangAction GetHangAction() const;
 
   bool ShouldRequestFocus();
+
+  // Register a callback invoked on the UI thread whenever a 'browser-nav:CMD'
+  // cefQuery arrives from any browser.  CMD is the part after the prefix, e.g.
+  // "back", "forward", "reload", "load:https://...", "new-tab".
+  // Pass nullptr to unregister.
+  static void SetNavCommandCallback(
+      std::function<void(const std::string&)> fn);
 
   // Used to determine the object type for each concrete implementation.
   virtual const void* GetTypeKey() const = 0;

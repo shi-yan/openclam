@@ -17,6 +17,7 @@ BrowserWindowStdMac::BrowserWindowStdMac(Delegate* delegate,
                                          const std::string& startup_url)
     : BrowserWindow(delegate) {
   client_handler_ = new ClientHandlerStd(this, with_controls, startup_url);
+  client_handler_->set_download_favicon_images(true);
 }
 
 void BrowserWindowStdMac::CreateBrowser(

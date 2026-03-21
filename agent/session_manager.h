@@ -72,9 +72,25 @@ class SessionManager {
   // Must be called on the main thread.
   void on_session_message(const std::string& session_id, OutboundMessage msg);
 
+  // Register / unregister the native browser for a tab so the dispatcher
+  // can look it up.  |browser_ptr| is a raw CefBrowser* (stored as void* to
+  // keep this header CEF-free).  Must be called on the UI thread.
+  // register_tab_browser: called from BrowserTabMac::OnBrowserCreated.
+  // unregister_tab_browser: called from BaseClientHandler::OnBeforeClose.
+  void register_tab_browser(const std::string& tab_id, void* browser_ptr);
+  void unregister_tab_browser(const std::string& tab_id);
+
+  // Initialise BrowserActionDispatcher.  Must be called once after the
+  // SessionManager is created and before any sessions start.
+  void init_dispatcher();
+
  private:
   std::unordered_map<std::string, std::shared_ptr<Session>> sessions_;
   TabAllocator tab_allocator_;
+
+  // tab_id → raw CefBrowser*.  Valid only while the browser is open.
+  // Entries are removed in unregister_tab_browser (called from OnBeforeClose).
+  std::unordered_map<std::string, void*> tab_browsers_;
 
   // Message handlers — all run on the main thread.
   void handle_display_message(Session& session, DisplayMessage msg);

@@ -8,8 +8,91 @@
 #include "browser/main_context.h"
 #include "browser/root_window_manager.h"
 #include "shared/common/client_switches.h"
+#include "agent/browser_action_dispatcher.h"
 
 namespace client {
+
+// ---------------------------------------------------------------------------
+// Global nav-command callback (set by RootWindowMacImpl, called on UI thread)
+// ---------------------------------------------------------------------------
+static std::function<void(const std::string&)> g_nav_command_fn;
+
+// static
+void BaseClientHandler::SetNavCommandCallback(
+    std::function<void(const std::string&)> fn) {
+  g_nav_command_fn = std::move(fn);
+}
+
+// ---------------------------------------------------------------------------
+// AgentQueryHandler
+//
+// Handles cefQuery calls that come from InjectJS wrappers.
+// Query format: "agent-js:REQUEST_ID:RESULT_JSON"
+// ---------------------------------------------------------------------------
+namespace {
+
+class AgentQueryHandler : public CefMessageRouterBrowserSide::Handler {
+ public:
+  bool OnQuery(CefRefPtr<CefBrowser> /*browser*/,
+               CefRefPtr<CefFrame> /*frame*/,
+               int64_t /*query_id*/,
+               const CefString& request,
+               bool /*persistent*/,
+               CefRefPtr<Callback> callback) override {
+    std::string req = request.ToString();
+    if (req.compare(0, 9, "agent-js:") != 0) return false;
+
+    // Parse "agent-js:REQUEST_ID:RESULT_JSON"
+    size_t colon2 = req.find(':', 9);
+    if (colon2 == std::string::npos) {
+      callback->Failure(0, "bad agent-js format");
+      return true;
+    }
+    std::string request_id = req.substr(9, colon2 - 9);
+    std::string payload    = req.substr(colon2 + 1);
+
+    if (auto* d = BrowserActionDispatcher::instance()) {
+      d->notify_js_result(request_id, true, payload);
+    }
+    callback->Success("");
+    return true;
+  }
+
+  void OnQueryCanceled(CefRefPtr<CefBrowser> /*browser*/,
+                       CefRefPtr<CefFrame> /*frame*/,
+                       int64_t /*query_id*/) override {}
+};
+
+// ---------------------------------------------------------------------------
+// BrowserNavQueryHandler
+//
+// Handles cefQuery calls from the Vue right panel for navigation actions.
+// Query format: "browser-nav:COMMAND"  (e.g. "browser-nav:load:https://...")
+// ---------------------------------------------------------------------------
+class BrowserNavQueryHandler : public CefMessageRouterBrowserSide::Handler {
+ public:
+  bool OnQuery(CefRefPtr<CefBrowser> /*browser*/,
+               CefRefPtr<CefFrame> /*frame*/,
+               int64_t /*query_id*/,
+               const CefString& request,
+               bool /*persistent*/,
+               CefRefPtr<Callback> callback) override {
+    std::string req = request.ToString();
+    static const std::string kPrefix = "browser-nav:";
+    if (req.compare(0, kPrefix.size(), kPrefix) != 0) return false;
+
+    std::string cmd = req.substr(kPrefix.size());
+    if (g_nav_command_fn) g_nav_command_fn(cmd);
+    callback->Success("");
+    return true;
+  }
+
+  void OnQueryCanceled(CefRefPtr<CefBrowser> /*browser*/,
+                       CefRefPtr<CefFrame> /*frame*/,
+                       int64_t /*query_id*/) override {}
+};
+
+}  // namespace
 
 BaseClientHandler::BaseClientHandler() {
   resource_manager_ = new CefResourceManager();
@@ -55,6 +138,12 @@ void BaseClientHandler::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
 
     // Register handlers with the router.
     test_runner::CreateMessageHandlers(message_handler_set_);
+    // Register the agent JS query handler.
+    auto* agent_handler = new AgentQueryHandler();
+    message_handler_set_.insert(agent_handler);
+    // Register the browser-nav query handler.
+    auto* nav_handler = new BrowserNavQueryHandler();
+    message_handler_set_.insert(nav_handler);
     for (auto* message_handler : message_handler_set_) {
       message_router_->AddHandler(message_handler, false);
     }
@@ -93,6 +182,11 @@ void BaseClientHandler::OnLoadingStateChange(CefRefPtr<CefBrowser> browser,
 
   if (!isLoading && initial_navigation_) {
     initial_navigation_ = false;
+  }
+
+  // Notify dispatcher so pending NavigateTo actions can complete.
+  if (auto* d = BrowserActionDispatcher::instance()) {
+    d->notify_loading_state_change(browser->GetIdentifier(), isLoading);
   }
 }
 

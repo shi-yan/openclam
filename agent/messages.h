@@ -15,7 +15,12 @@
 // through the main thread dispatcher.
 // ==========================================================================
 
-struct NavigateTo     { std::string tab_id; std::string url; };
+struct NavigateTo {
+  std::string tab_id;
+  std::string url;
+  std::string wait_for_selector = "";   // poll for this CSS selector after OnLoadEnd
+  int         selector_timeout_ms = 5000;
+};
 struct InjectJS       { std::string tab_id; std::string script; };
 struct TakeScreenshot { std::string tab_id; };
 struct ReadDOM        { std::string tab_id; std::string selector; };
@@ -28,6 +33,10 @@ struct ReadConsoleLog { std::string tab_id; };
 struct OpenNewTab     { std::string initial_url; };
 struct CloseTab       { std::string tab_id; };
 struct FocusTab       { std::string tab_id; };
+
+// Subscription tools — result is a subscription_id; then EventNotifications arrive.
+struct SubscribeToEvent   { std::string tab_id; std::string event_type; std::string filter; };
+struct UnsubscribeFromEvent { std::string subscription_id; };
 
 using BrowserAction = std::variant<
     NavigateTo,
@@ -42,7 +51,9 @@ using BrowserAction = std::variant<
     ReadConsoleLog,
     OpenNewTab,
     CloseTab,
-    FocusTab
+    FocusTab,
+    SubscribeToEvent,
+    UnsubscribeFromEvent
 >;
 
 // ==========================================================================

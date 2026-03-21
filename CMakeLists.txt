@@ -61,6 +61,23 @@ if(NOT concurrentqueue_POPULATED)
   FetchContent_Populate(concurrentqueue)
 endif()
 
+# nlohmann/json — header-only JSON library
+FetchContent_Declare(
+  nlohmann_json
+  URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
+)
+FetchContent_MakeAvailable(nlohmann_json)
+
+# cpp-httplib — header-only HTTP/HTTPS client (requires OpenSSL for SSL support)
+FetchContent_Declare(
+  httplib
+  URL https://github.com/yhirose/cpp-httplib/archive/refs/tags/v0.18.3.tar.gz
+)
+FetchContent_MakeAvailable(httplib)
+
+# OpenSSL — needed by cpp-httplib for HTTPS
+find_package(OpenSSL REQUIRED)
+
 # Load the CEF configuration (sets OS_MAC/OS_LINUX/OS_WINDOWS, compiler flags,
 # CEF_LIBCEF_DLL_WRAPPER_PATH, CEF_HELPER_APP_SUFFIXES, CEF_STANDARD_LIBS,
 # CEF_BINARY_FILES, CEF_RESOURCE_FILES, etc.)
@@ -174,7 +191,16 @@ source_group(cefclient\\\\browser FILES ${CEFCLIENT_BROWSER_BROWSER_SRCS})
 set(CEFCLIENT_AGENT_SRCS
   agent/agent_loop.cc
   agent/agent_loop.h
+  agent/browser_action_dispatcher.h
   agent/id_utils.h
+  agent/llm_client.h
+  agent/anthropic_client.cc
+  agent/anthropic_client.h
+  agent/openai_client.cc
+  agent/openai_client.h
+  agent/gemini_client.cc
+  agent/gemini_client.h
+  agent/llm_factory.cc
   agent/messages.h
   agent/session.cc
   agent/session.h
@@ -185,6 +211,11 @@ set(CEFCLIENT_AGENT_SRCS
   agent/types.h
   )
 source_group(cefclient\\\\agent FILES ${CEFCLIENT_AGENT_SRCS})
+
+# macOS-only agent sources (need ObjC / AppKit / CoreGraphics)
+set(CEFCLIENT_AGENT_MAC_SRCS
+  agent/browser_action_dispatcher.mm
+  )
 
 set(CEFCLIENT_BROWSER_SHARED_BROWSER_SRCS
   shared/browser/client_app_browser.cc
@@ -550,6 +581,7 @@ if(OS_MAC)
     ${CEFCLIENT_RESOURCES_SRCS}
     ${CEFCLIENT_MAC_SRCS}
     ${CEFCLIENT_AGENT_SRCS}
+    ${CEFCLIENT_AGENT_MAC_SRCS}
     )
 
   set(CEFCLIENT_HELPER_SRCS
@@ -592,8 +624,23 @@ if(OS_MAC)
     MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/mac/Info.plist.in
     )
   add_dependencies(${CEF_TARGET} libcef_dll_wrapper vue_build_sessions vue_build_tabs_chat)
-  target_link_libraries(${CEF_TARGET} libcef_dll_wrapper ${CEF_STANDARD_LIBS} "-framework OpenGL" sqlite3)
-  target_include_directories(${CEF_TARGET} PRIVATE "${concurrentqueue_SOURCE_DIR}")
+  target_link_libraries(${CEF_TARGET}
+    libcef_dll_wrapper
+    ${CEF_STANDARD_LIBS}
+    "-framework OpenGL"
+    "-framework CoreGraphics"
+    "-framework ImageIO"
+    "-framework Foundation"
+    sqlite3
+    nlohmann_json::nlohmann_json
+    httplib::httplib
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    )
+  target_include_directories(${CEF_TARGET} PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${concurrentqueue_SOURCE_DIR}"
+    )
 
   COPY_MAC_FRAMEWORK("${CEF_TARGET}" "${CEF_BINARY_DIR}" "${CEF_APP}")
 

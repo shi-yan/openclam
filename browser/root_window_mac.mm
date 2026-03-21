@@ -2,6 +2,7 @@
 // reserved. Use of this source code is governed by a BSD-style license that
 // can be found in the LICENSE file.
 
+#include "browser/base_client_handler.h"
 #include "browser/root_window_mac.h"
 
 #include <Cocoa/Cocoa.h>
@@ -73,6 +74,12 @@ namespace client { class RootWindowMacImpl; }
   return totalW - dt - 80.0;
 }
 
+// Allow both side panels to be collapsed to zero width.
+- (BOOL)splitView:(NSSplitView*)splitView
+    canCollapseSubview:(NSView*)subview {
+  return subview == self.leftPanelView || subview == self.rightPanelView;
+}
+
 @end
 
 // ---------------------------------------------------------------------------
@@ -96,11 +103,36 @@ namespace client { class RootWindowMacImpl; }
 - (IBAction)reload:(id)sender;
 - (IBAction)stopLoading:(id)sender;
 - (IBAction)takeURLStringValueFrom:(NSTextField*)sender;
+- (IBAction)toggleLeftPanel:(id)sender;
+- (IBAction)toggleRightPanel:(id)sender;
+
+// Set by CreateRootWindow so toggle actions can reach the split view.
+@property(nonatomic, assign) NSSplitView* splitView;
+@property(nonatomic, assign) NSView* leftPanelView;
+@property(nonatomic, assign) NSView* rightPanelView;
 @end
 
 namespace client {
 
 namespace {
+
+// Simple base64 encoder for binary → ASCII.
+static std::string Base64Encode(const unsigned char* data, size_t len) {
+  static const char kChars[] =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  std::string out;
+  out.reserve(((len + 2) / 3) * 4);
+  for (size_t i = 0; i < len; i += 3) {
+    unsigned int v = static_cast<unsigned int>(data[i]) << 16;
+    if (i + 1 < len) v |= static_cast<unsigned int>(data[i + 1]) << 8;
+    if (i + 2 < len) v |= static_cast<unsigned int>(data[i + 2]);
+    out += kChars[(v >> 18) & 0x3F];
+    out += kChars[(v >> 12) & 0x3F];
+    out += (i + 1 < len) ? kChars[(v >> 6) & 0x3F] : '=';
+    out += (i + 2 < len) ? kChars[(v >> 0) & 0x3F] : '=';
+  }
+  return out;
+}
 
 #define BUTTON_HEIGHT 22
 #define BUTTON_WIDTH 72
@@ -146,6 +178,9 @@ class PanelBrowserDelegate : public BrowserWindow::Delegate {
  public:
   // Call before CreateBrowser so OnBrowserCreated can size the browser NSView.
   void SetParentView(NSView* parent) { parent_view_ = parent; }
+  void SetDestroyedCallback(std::function<void()> cb) {
+    destroyed_cb_ = std::move(cb);
+  }
 
   bool UseAlloyStyle() const override { return true; }
 
@@ -161,7 +196,9 @@ class PanelBrowserDelegate : public BrowserWindow::Delegate {
     }
   }
 
-  void OnBrowserWindowDestroyed() override {}
+  void OnBrowserWindowDestroyed() override {
+    if (destroyed_cb_) destroyed_cb_();
+  }
   void OnSetAddress(const std::string&) override {}
   void OnSetTitle(const std::string&) override {}
   void OnSetFullscreen(bool) override {}
@@ -172,6 +209,7 @@ class PanelBrowserDelegate : public BrowserWindow::Delegate {
 
  private:
   NSView* __unsafe_unretained parent_view_ = nil;
+  std::function<void()> destroyed_cb_;
 };
 
 // ===========================================================================
@@ -193,12 +231,13 @@ class BrowserTabMac : public BrowserWindow::Delegate {
   int tab_id() const { return tab_id_; }
   BrowserWindowStdMac* browser_window() { return browser_window_.get(); }
 
-  const std::string& title() const { return title_; }
-  const std::string& url()   const { return url_; }
-  bool is_ready()      const { return ready_; }
-  bool is_loading()    const { return is_loading_; }
-  bool can_go_back()   const { return can_go_back_; }
-  bool can_go_forward()const { return can_go_forward_; }
+  const std::string& title()            const { return title_; }
+  const std::string& url()              const { return url_; }
+  const std::string& favicon_data_url() const { return favicon_data_url_; }
+  bool is_ready()       const { return ready_; }
+  bool is_loading()     const { return is_loading_; }
+  bool can_go_back()    const { return can_go_back_; }
+  bool can_go_forward() const { return can_go_forward_; }
 
   bool UseAlloyStyle() const override;
 
@@ -228,6 +267,18 @@ class BrowserTabMac : public BrowserWindow::Delegate {
     NotifyParent();
   }
 
+  void OnSetFavicon(CefRefPtr<CefImage> image) override {
+    if (!image || image->IsEmpty()) return;
+    int pw = 0, ph = 0;
+    CefRefPtr<CefBinaryValue> png = image->GetAsPNG(1.0f, true, pw, ph);
+    if (!png) return;
+    size_t sz = png->GetSize();
+    std::vector<unsigned char> buf(sz);
+    png->GetData(buf.data(), sz, 0);
+    favicon_data_url_ = "data:image/png;base64," + Base64Encode(buf.data(), sz);
+    NotifyParent();
+  }
+
   void OnSetDraggableRegions(
       const std::vector<CefDraggableRegion>&) override {}
 
@@ -239,6 +290,7 @@ class BrowserTabMac : public BrowserWindow::Delegate {
   std::unique_ptr<BrowserWindowStdMac> browser_window_;
   std::string title_ = "New Tab";
   std::string url_;
+  std::string favicon_data_url_;
   bool ready_ = false;
   bool is_loading_ = false;
   bool can_go_back_ = false;
@@ -308,6 +360,7 @@ class RootWindowMacImpl
 
   // Vue panel helpers.
   void CreateVuePanels();
+  void PostNavStateToVue(BrowserTabMac* tab);
 
   BrowserWindowStdMac* ActiveBrowserWindowStd() const;
   BrowserWindow* ActiveBrowserWindow() const;
@@ -358,6 +411,9 @@ class RootWindowMacImpl
 
   bool window_destroyed_ = false;
   bool browser_destroyed_ = false;  // used for OSR/popup path only
+  // Panel browsers destroyed flags (true = destroyed or never created).
+  bool left_panel_destroyed_ = true;
+  bool right_panel_destroyed_ = true;
 };
 
 // ---------------------------------------------------------------------------
@@ -523,7 +579,6 @@ void RootWindowMacImpl::Close(bool force) {
   if (window_) {
     static_cast<RootWindowDelegate*>([window_ delegate]).force_close = force;
     [window_ performClose:nil];
-    window_destroyed_ = true;
   }
 }
 
@@ -586,12 +641,11 @@ void RootWindowMacImpl::OpenNewTab(const std::string& url) {
   active_tab_idx_ = static_cast<int>(tabs_.size());
   tabs_.push_back(std::move(tab));
 
-  // Browser is a child of browser_area_view_ (right panel).
+  // Browser fills the full browser_area_view_ (no native toolbar).
   NSRect bab = [browser_area_view_ bounds];
-  const CGFloat urlH = with_controls_ ? URLBAR_HEIGHT : 0;
   CefRect rect(0, 0,
                static_cast<int>(bab.size.width),
-               static_cast<int>(bab.size.height - urlH));
+               static_cast<int>(bab.size.height));
 
   tabs_[active_tab_idx_]->browser_window()->CreateBrowser(
       CAST_NSVIEW_TO_CEF_WINDOW_HANDLE(browser_area_view_), rect,
@@ -631,6 +685,9 @@ void RootWindowMacImpl::SwitchToTab(int idx) {
     [window_ setTitle:
         [NSString stringWithUTF8String:new_tab->title().c_str()]];
   }
+
+  // Push the new tab's URL and nav state to the Vue right panel.
+  PostNavStateToVue(new_tab);
 }
 
 void RootWindowMacImpl::CloseTab(int idx, bool force) {
@@ -688,6 +745,17 @@ bool RootWindowMacImpl::RequestCloseAllBrowsers(bool force) {
     }
   }
 
+  // Force-close Vue panel browsers (no beforeunload handlers).
+  // Don't count them in any_pending — they must not block the native close.
+  if (left_panel_browser_ && !left_panel_browser_->IsClosing()) {
+    auto browser = left_panel_browser_->GetBrowser();
+    if (browser) browser->GetHost()->CloseBrowser(true);
+  }
+  if (right_panel_browser_ && !right_panel_browser_->IsClosing()) {
+    auto browser = right_panel_browser_->GetBrowser();
+    if (browser) browser->GetHost()->CloseBrowser(true);
+  }
+
   return any_pending;
 }
 
@@ -716,12 +784,6 @@ void RootWindowMacImpl::OnTabReady(BrowserTabMac* tab) {
     auto browser = tab->browser_window()->GetBrowser();
     if (browser) browser->GetHost()->WasHidden(true);
     if (v) [v setHidden:YES];
-  }
-
-  // Open a second tab automatically when the first tab of the initial window
-  // becomes ready, so the sidebar is populated immediately.
-  if (idx == 0 && tabs_.size() == 1 && !is_popup_) {
-    OpenNewTab("about:blank");
   }
 }
 
@@ -755,6 +817,9 @@ void RootWindowMacImpl::OnTabUpdated(BrowserTabMac* tab) {
     [window_
         setTitle:[NSString stringWithUTF8String:tab->title().c_str()]];
   }
+
+  // Push URL + nav buttons state to the Vue right panel.
+  PostNavStateToVue(tab);
 }
 
 void RootWindowMacImpl::OnTabDestroyed(BrowserTabMac* tab) {
@@ -807,6 +872,44 @@ void RootWindowMacImpl::OnTabDestroyed(BrowserTabMac* tab) {
       return;
     }
   }
+}
+
+
+// Escape a string for use inside a JSON string literal (double-quoted).
+static std::string JsEscapeJson(const std::string& s) {
+  std::string out;
+  out.reserve(s.size() + 4);
+  for (unsigned char c : s) {
+    switch (c) {
+      case '"':  out += "\\\""; break;
+      case '\\': out += "\\\\"; break;
+      case '\n': out += "\\n";  break;
+      case '\r': out += "\\r";  break;
+      default:   out += static_cast<char>(c);
+    }
+  }
+  return out;
+}
+
+// Post a nav-state update to the Vue right panel.
+void RootWindowMacImpl::PostNavStateToVue(BrowserTabMac* tab) {
+  if (!right_panel_browser_ || !right_panel_browser_->GetBrowser()) return;
+  CefRefPtr<CefFrame> frame =
+      right_panel_browser_->GetBrowser()->GetMainFrame();
+  if (!frame) return;
+
+  std::string payload =
+      "{\"url\":\"" + JsEscapeJson(tab->url()) + "\","
+      "\"title\":\"" + JsEscapeJson(tab->title()) + "\","
+      "\"faviconDataUrl\":\"" + tab->favicon_data_url() + "\","
+      "\"canGoBack\":" + (tab->can_go_back()    ? "true" : "false") + ","
+      "\"canGoForward\":" + (tab->can_go_forward() ? "true" : "false") + ","
+      "\"isLoading\":" + (tab->is_loading()     ? "true" : "false") + "}";
+
+  std::string js =
+      "if(window.__openclam_post)"
+      "window.__openclam_post({type:\"active-nav-state\",payload:" + payload + "});";
+  frame->ExecuteJavaScript(js, frame->GetURL(), 0);
 }
 
 // ---- Vue panel views (layout + browser creation handled in CreateRootWindow)
@@ -876,6 +979,50 @@ void RootWindowMacImpl::CreateRootWindow(const CefBrowserSettings& settings,
 
   if (!with_osr_) [contentView setWantsLayer:YES];
 
+  // ── Titlebar accessory: panel toggle buttons (left | right sidebar) ───────
+  if (has_controls && !is_popup_) {
+    // Container view for the two buttons placed at the trailing edge.
+    NSView* accessory = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 60, 28)];
+
+    // Helper: create a compact icon button using an SF Symbol name.
+    auto makeIconBtn = ^NSButton*(NSString* symbolName, SEL action, CGFloat x) {
+      NSButton* btn = [[NSButton alloc] initWithFrame:NSMakeRect(x, 3, 26, 22)];
+      btn.bezelStyle = NSBezelStyleAccessoryBarAction;
+      btn.buttonType = NSButtonTypePushOnPushOff;
+      btn.bordered   = NO;
+      btn.state      = NSControlStateValueOn;  // panels visible by default
+
+      if (@available(macOS 11.0, *)) {
+        NSImageSymbolConfiguration* cfg =
+            [NSImageSymbolConfiguration
+                configurationWithPointSize:13
+                                    weight:NSFontWeightRegular];
+        btn.image = [NSImage imageWithSystemSymbolName:symbolName
+                                  accessibilityDescription:nil];
+        btn.image = [btn.image imageWithSymbolConfiguration:cfg];
+      } else {
+        // Fallback: text label for older macOS.
+        btn.title     = (x < 10) ? @"⊟" : @"⊞";
+        btn.font      = [NSFont systemFontOfSize:13];
+      }
+
+      btn.contentTintColor = [NSColor colorWithWhite:0.65 alpha:1.0];
+      btn.target  = window_delegate_;
+      btn.action  = action;
+      [accessory addSubview:btn];
+      return btn;
+    };
+
+    makeIconBtn(@"sidebar.left",  @selector(toggleLeftPanel:),  2);
+    makeIconBtn(@"sidebar.right", @selector(toggleRightPanel:), 32);
+
+    NSTitlebarAccessoryViewController* acc =
+        [[NSTitlebarAccessoryViewController alloc] init];
+    acc.view = accessory;
+    acc.layoutAttribute = NSLayoutAttributeTrailing;
+    [window_ addTitlebarAccessoryViewController:acc];
+  }
+
   if (has_controls) {
     // Create Vue sidebar panel views (no layout yet).
     CreateVuePanels();
@@ -922,6 +1069,11 @@ void RootWindowMacImpl::CreateRootWindow(const CefBrowserSettings& settings,
     split_delegate_.rightPanelView = right_panel_view_;
     split_view_.delegate = split_delegate_;
 
+    // Wire up toggle actions on the window delegate.
+    window_delegate_.splitView      = split_view_;
+    window_delegate_.leftPanelView  = left_panel_view_;
+    window_delegate_.rightPanelView = right_panel_view_;
+
     // First layout pass to get real split_view_ frame.
     [contentView layoutSubtreeIfNeeded];
 
@@ -945,6 +1097,23 @@ void RootWindowMacImpl::CreateRootWindow(const CefBrowserSettings& settings,
     // Give each delegate its parent so OnBrowserCreated fills the view.
     left_panel_delegate_.SetParentView(left_panel_view_);
     right_panel_delegate_.SetParentView(right_panel_view_);
+
+    // Track panel browser destruction so NotifyDestroyedIfDone can wait.
+    left_panel_destroyed_ = false;
+    right_panel_destroyed_ = false;
+    {
+      scoped_refptr<RootWindowMacImpl> self(this);
+      left_panel_delegate_.SetDestroyedCallback([self]() {
+        REQUIRE_MAIN_THREAD();
+        self->left_panel_destroyed_ = true;
+        self->NotifyDestroyedIfDone();
+      });
+      right_panel_delegate_.SetDestroyedCallback([self]() {
+        REQUIRE_MAIN_THREAD();
+        self->right_panel_destroyed_ = true;
+        self->NotifyDestroyedIfDone();
+      });
+    }
 
     // Build openclam://ui/ URLs served by the custom scheme handler.
     const std::string kScheme =
@@ -974,48 +1143,38 @@ void RootWindowMacImpl::CreateRootWindow(const CefBrowserSettings& settings,
         settings, nullptr,
         root_window_.delegate_->GetRequestContext());
 
-    // URL bar at the top of browser_area_view_ (AppKit: high y = top).
-    NSRect br;
-    br.origin.y = browserH + (urlH - BUTTON_HEIGHT) / 2;
-    br.size.height = BUTTON_HEIGHT;
-    br.origin.x = BUTTON_MARGIN;
-    br.size.width = BUTTON_WIDTH;
+    // Wire up nav commands from the Vue right panel to the active content tab.
+    {
+      scoped_refptr<RootWindowMacImpl> self(this);
+      client::BaseClientHandler::SetNavCommandCallback(
+          [self](const std::string& cmd) {
+            if (cmd == "back") {
+              if (auto b = self->GetBrowser()) b->GoBack();
+            } else if (cmd == "forward") {
+              if (auto b = self->GetBrowser()) b->GoForward();
+            } else if (cmd == "reload") {
+              if (auto b = self->GetBrowser()) b->Reload();
+            } else if (cmd.compare(0, 5, "load:") == 0) {
+              std::string url = cmd.substr(5);
+              if (auto b = self->GetBrowser())
+                b->GetMainFrame()->LoadURL(url);
+            } else if (cmd == "new-tab") {
+              self->OpenNewTab("about:blank");
+            } else if (cmd.compare(0, 7, "switch:") == 0) {
+              int idx = std::stoi(cmd.substr(7));
+              self->SwitchToTab(idx);
+            } else if (cmd.compare(0, 6, "close:") == 0) {
+              int idx = std::stoi(cmd.substr(6));
+              self->CloseTab(idx, false);
+            }
+          });
+    }
 
-    back_button_ = MakeButton(&br, @"Back", browser_area_view_);
-    [back_button_ setTarget:window_delegate_];
-    [back_button_ setAction:@selector(goBack:)];
-    [back_button_ setEnabled:NO];
-
-    forward_button_ = MakeButton(&br, @"Forward", browser_area_view_);
-    [forward_button_ setTarget:window_delegate_];
-    [forward_button_ setAction:@selector(goForward:)];
-    [forward_button_ setEnabled:NO];
-
-    reload_button_ = MakeButton(&br, @"Reload", browser_area_view_);
-    [reload_button_ setTarget:window_delegate_];
-    [reload_button_ setAction:@selector(reload:)];
-    [reload_button_ setEnabled:NO];
-
-    stop_button_ = MakeButton(&br, @"Stop", browser_area_view_);
-    [stop_button_ setTarget:window_delegate_];
-    [stop_button_ setAction:@selector(stopLoading:)];
-    [stop_button_ setEnabled:NO];
-
-    br.origin.x += BUTTON_MARGIN;
-    br.size.width = browserAreaW - br.origin.x - BUTTON_MARGIN;
-    url_textfield_ = [[NSTextField alloc] initWithFrame:br];
-    [browser_area_view_ addSubview:url_textfield_];
-    [url_textfield_ setAutoresizingMask:(NSViewWidthSizable | NSViewMinYMargin)];
-    [url_textfield_ setTarget:window_delegate_];
-    [url_textfield_ setAction:@selector(takeURLStringValueFrom:)];
-    [url_textfield_ setEnabled:NO];
-    [[url_textfield_ cell] setWraps:NO];
-    [[url_textfield_ cell] setScrollable:YES];
-
-    // First tab browser fills browser_area_view_ below the url bar.
+    // Navigation is handled by the Vue right panel — no native toolbar needed.
+    // The browser content fills the full browser_area_view_ height.
     const CefRect cef_rect(0, 0,
                            static_cast<int>(browserAreaW),
-                           static_cast<int>(browserH));
+                           static_cast<int>(contentH));
 
     if (!is_popup_) {
       DCHECK(!tabs_.empty());
@@ -1149,13 +1308,15 @@ void RootWindowMacImpl::NotifyDestroyedIfDone() {
   // For OSR/popup windows: use the legacy browser_destroyed_ flag.
   if (!window_destroyed_) return;
   if (!browser_window_ && !browser_destroyed_) {
-    // Tabbed path: wait for closing_tabs_ to empty too.
+    // Tabbed path: wait for content tabs and panel browsers to finish closing.
     if (!tabs_.empty()) return;
     if (!closing_tabs_.empty()) return;
   } else {
     // OSR/popup path.
     if (!browser_destroyed_) return;
   }
+  // Always wait for Vue panel browsers to close before signalling destroyed.
+  if (!left_panel_destroyed_ || !right_panel_destroyed_) return;
   root_window_.delegate_->OnRootWindowDestroyed(&root_window_);
 }
 
@@ -1424,6 +1585,36 @@ void RootWindowMac::OnNativeWindowClosed() { impl_->OnNativeWindowClosed(); }
   NSURL* tmp = [NSURL URLWithString:url];
   if (tmp && ![tmp scheme]) url = [@"http://" stringByAppendingString:url];
   browser->GetMainFrame()->LoadURL([url UTF8String]);
+}
+
+- (IBAction)toggleLeftPanel:(id)sender {
+  if (!_splitView || !_leftPanelView) return;
+  BOOL collapsed = [_splitView isSubviewCollapsed:_leftPanelView];
+  if (collapsed) {
+    [_splitView setPosition:LEFT_PANEL_WIDTH ofDividerAtIndex:0];
+  } else {
+    [_splitView setPosition:0 ofDividerAtIndex:0];
+  }
+  // Update button state if it is an NSButton.
+  if ([sender isKindOfClass:[NSButton class]]) {
+    NSButton* btn = (NSButton*)sender;
+    btn.state = collapsed ? NSControlStateValueOn : NSControlStateValueOff;
+  }
+}
+
+- (IBAction)toggleRightPanel:(id)sender {
+  if (!_splitView || !_rightPanelView) return;
+  const CGFloat totalW = _splitView.frame.size.width;
+  BOOL collapsed = [_splitView isSubviewCollapsed:_rightPanelView];
+  if (collapsed) {
+    [_splitView setPosition:(totalW - RIGHT_PANEL_WIDTH) ofDividerAtIndex:1];
+  } else {
+    [_splitView setPosition:totalW ofDividerAtIndex:1];
+  }
+  if ([sender isKindOfClass:[NSButton class]]) {
+    NSButton* btn = (NSButton*)sender;
+    btn.state = collapsed ? NSControlStateValueOn : NSControlStateValueOff;
+  }
 }
 
 - (void)windowDidBecomeKey:(NSNotification*)notification {
